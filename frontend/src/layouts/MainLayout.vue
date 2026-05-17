@@ -62,11 +62,13 @@
         </router-view>
       </main>
     </div>
+
+    <GlobalLoading :visible="showGlobalLoading" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import {
@@ -74,6 +76,7 @@ import {
 } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
 import SpaceSwitcher from '../components/SpaceSwitcher.vue'
+import GlobalLoading from '../components/GlobalLoading.vue'
 import BrandLogo from '../components/brand/BrandLogo.vue'
 import DataNav from './navs/DataNav.vue'
 import BINav from './navs/BINav.vue'
@@ -82,6 +85,9 @@ import AdminNav from './navs/AdminNav.vue'
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
+
+const showGlobalLoading = ref(false)
+const previousSpaceId = ref<string | null>(null)
 
 const tabs = computed(() => {
   const base = [
@@ -107,8 +113,7 @@ const hideSidebar = computed(() => {
   return (
     route.path.startsWith('/chat') ||
     route.path.startsWith('/data') ||
-    route.path.startsWith('/bi') ||
-    route.path.startsWith('/admin')
+    route.path.startsWith('/bi')
   )
 })
 
@@ -133,7 +138,24 @@ function goModule(tab: { key: string; path: string }) {
 }
 
 function onSpaceChanged(space: any) {
-  window.dispatchEvent(new CustomEvent('space-changed', { detail: space }))
+  const newId = space?.id || ''
+
+  // 首次加载时仅记录，不触发 reload
+  if (previousSpaceId.value === null) {
+    previousSpaceId.value = newId
+    window.dispatchEvent(new CustomEvent('space-changed', { detail: space }))
+    return
+  }
+
+  // 用户主动切换空间 -> 显示 loading 并刷新页面
+  if (newId && newId !== previousSpaceId.value) {
+    showGlobalLoading.value = true
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        window.location.reload()
+      }, 2000)
+    })
+  }
 }
 
 function handleUserCommand(cmd: string) {

@@ -14,7 +14,7 @@ from typing import Any, Dict, List
 
 from app.agents.base import BaseAgent
 from app.services.llm_client import LLMClient
-from app.config import LLM_MODEL_QWEN_PRIMARY
+from app.config import LLM_MODEL_DEEPSEEK_PRIMARY
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +149,7 @@ class LocalDashboardBuilderAgent(BaseAgent):
             temperature=0.4,
             max_tokens=2048,
             timeout=25.0,
-            model_override=LLM_MODEL_QWEN_PRIMARY,
+            model_override=LLM_MODEL_DEEPSEEK_PRIMARY,
         )
 
         result.setdefault("status", "need_input")
@@ -282,7 +282,7 @@ class LocalDashboardLayoutAgent(BaseAgent):
             temperature=0.3,
             max_tokens=4096,
             timeout=60.0,
-            model_override=LLM_MODEL_QWEN_PRIMARY,
+            model_override=LLM_MODEL_DEEPSEEK_PRIMARY,
         )
 
         result.setdefault("dashboard", {})

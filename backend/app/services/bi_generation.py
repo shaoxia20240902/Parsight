@@ -9,7 +9,7 @@ import hashlib
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.agents.bi_pipeline_agents import BIChartRepairAgent, BIIndustryInferenceAgent
+from app.agents.bi_pipeline_agents import BIChartRepairAgent, BIChartSQLAgent, BIIndustryInferenceAgent
 from app.services.bi_blueprint_pipeline import BIBlueprintPipeline
 from app.services.bi_context import file_payload_for_industry, full_field_profiles, sheet_payload_for_llm
 from app.services.bi_planner import BIPlanner
@@ -32,12 +32,127 @@ from app.services.bi_pipeline_logger import (
     log_step_warn,
 )
 from app.services.db_service import DBService
+from app.utils.sql_validator import SQLValidator
 
 logger = logging.getLogger(__name__)
 
 
+class BIChartTypeResolver:
+    """Turns question/spec intent into a renderable chart contract."""
+
+    VALID_TYPES = {"kpi_group", "bar", "line", "pie", "combo", "ranking", "table", "detail_table"}
+
+    def resolve(
+        self,
+        spec: Dict[str, Any],
+        profile: Dict[str, Any],
+        default_chart_type: str,
+        sql: str,
+        summary_sql: Optional[str],
+    ) -> Tuple[str, str, Optional[str], Dict[str, Any], str]:
+        metrics = spec.get("metrics") or []
+        dimensions = spec.get("dimensions") or []
+        time_field = spec.get("time_field")
+        analysis_type = spec.get("analysis_type") or ""
+        visual_intent = spec.get("visual_intent") or ""
+
+        chart_type = default_chart_type if default_chart_type in self.VALID_TYPES else "bar"
+        intent_type = visual_intent or analysis_type or "business_analysis"
+
+        if analysis_type in {"detail", "anomaly_list"} or visual_intent == "detail_list":
+            chart_type = "detail_table"
+        elif analysis_type == "ranking" or visual_intent == "ranking":
+            chart_type = "ranking"
+        elif analysis_type in {"share", "structure"} or visual_intent == "share_structure":
+            chart_type = "pie"
+        elif analysis_type in {"trend", "growth_rate"} or visual_intent in {"time_trend", "time_structure_trend"}:
+            chart_type = "line"
+        elif self._needs_combo(metrics, spec):
+            chart_type = "combo"
+
+        if chart_type == "combo":
+            sql = self._combo_sql(spec, profile) or sql
+        encoding = self._encoding(chart_type, spec, profile)
+        return chart_type, sql, summary_sql, encoding, intent_type
+
+    def is_rate_field(self, field: str) -> bool:
+        text = str(field).lower()
+        return any(k in text for k in ("率", "占比", "比例", "percent", "percentage", "rate", "ratio", "margin"))
+
+    def _needs_combo(self, metrics: List[Dict[str, Any]], spec: Dict[str, Any]) -> bool:
+        preferred = spec.get("preferred_chart_types") or []
+        if len(metrics) < 2:
+            return False
+        if "combo" in preferred:
+            return True
+        has_rate = any(self.is_rate_field(m.get("field") or m.get("label", "")) for m in metrics)
+        has_value = any(not self.is_rate_field(m.get("field") or m.get("label", "")) for m in metrics)
+        return has_rate and has_value
+
+    def _encoding(self, chart_type: str, spec: Dict[str, Any], profile: Dict[str, Any]) -> Dict[str, Any]:
+        metrics = spec.get("metrics") or []
+        dimensions = spec.get("dimensions") or []
+        time_field = spec.get("time_field")
+        x_field = time_field or (dimensions[0] if dimensions else None)
+        encoding: Dict[str, Any] = {}
+        if x_field:
+            encoding["x"] = {
+                "field": x_field["field"],
+                "label": x_field.get("label") or x_field["field"],
+                "role": "time" if time_field and x_field["field"] == time_field["field"] else "dimension",
+            }
+        y_items = []
+        for idx, metric in enumerate(metrics[:4]):
+            label = metric.get("label") or metric.get("field")
+            is_rate = self.is_rate_field(label)
+            y_items.append({
+                "field": label,
+                "label": label,
+                "axis": "right" if chart_type == "combo" and is_rate else "left",
+                "series_type": "line" if chart_type == "combo" and is_rate else ("line" if chart_type == "line" else "bar"),
+                "format": "percent" if is_rate else "number",
+            })
+        if y_items:
+            encoding["y"] = y_items
+        if chart_type == "pie" and len(metrics) == 1:
+            encoding["share"] = {"field": "占比", "label": "占比", "format": "percent"}
+        if chart_type == "ranking" and metrics:
+            encoding["sort"] = {"field": metrics[0].get("label") or metrics[0].get("field"), "direction": "desc"}
+            encoding["limit"] = 10
+        return encoding
+
+    def _combo_sql(self, spec: Dict[str, Any], profile: Dict[str, Any]) -> Optional[str]:
+        metrics = spec.get("metrics") or []
+        dimensions = spec.get("dimensions") or []
+        time_field = spec.get("time_field")
+        x = time_field or (dimensions[0] if dimensions else None)
+        if not x or len(metrics) < 2:
+            return None
+        table = quote_ident(spec["table_name"])
+        x_expr = (
+            f"DATE_FORMAT({quote_ident(x['field'])}, '%Y-%m')"
+            if time_field and x["field"] == time_field["field"]
+            else quote_ident(x["field"])
+        )
+        select_parts = [f"{x_expr} AS `{safe_alias(x.get('label') or x['field'])}`"]
+        for metric in metrics[:2]:
+            expr = numeric_expr(metric["field"])
+            alias = safe_alias(metric.get("label") or metric["field"])
+            if self.is_rate_field(alias):
+                select_parts.append(f"ROUND(AVG({expr}), 0) AS `{alias}`")
+            else:
+                select_parts.append(f"SUM({expr}) AS `{alias}`")
+        where = f"WHERE {quote_ident(x['field'])} IS NOT NULL AND {quote_ident(x['field'])} <> ''"
+        order_alias = safe_alias(metrics[0].get("label") or metrics[0]["field"])
+        order = f"`{safe_alias(x.get('label') or x['field'])}` ASC" if time_field else f"`{order_alias}` DESC"
+        return (
+            f"SELECT {', '.join(select_parts)} FROM {table} {where} "
+            f"GROUP BY {x_expr} ORDER BY {order} LIMIT 10"
+        )
+
+
 class BIBusinessGenerator:
-    MAX_WAREHOUSE = 40
+    MAX_WAREHOUSE = 100
     MAX_BOARD_PER_CATEGORY = 10
 
     def __init__(self, db_service: DBService, concurrency: int = 4):
@@ -47,8 +162,10 @@ class BIBusinessGenerator:
         self.industry_agent = BIIndustryInferenceAgent()
         self.blueprint_pipeline = BIBlueprintPipeline(concurrency=concurrency)
         self.repair_agent = BIChartRepairAgent()
+        self.sql_agent = BIChartSQLAgent()
         self.spec_compiler = MetricSpecCompiler()
         self.sql_builder = BISQLBuilder()
+        self.chart_resolver = BIChartTypeResolver()
         self.sem = asyncio.Semaphore(concurrency)
 
     async def generate(
@@ -181,6 +298,7 @@ class BIBusinessGenerator:
                 valid_charts.append(result)
 
         valid_charts = self._rank_and_layout(valid_charts)
+        valid_charts = self._limit_warehouse_balanced(valid_charts)
 
         log_step_ok(
             STEP_GENERATE_END,
@@ -188,7 +306,7 @@ class BIBusinessGenerator:
             run_ctx=run_ctx,
             extra={
                 "sheet_count": len(profiles),
-                "chart_count": min(len(valid_charts), self.MAX_WAREHOUSE),
+                "chart_count": len(valid_charts),
                 "charts_dropped_count": len(charts_dropped),
                 "relationship_count": len(relationships),
             },
@@ -202,12 +320,12 @@ class BIBusinessGenerator:
             "categories": categories,
             "custom_categories": relation_categories,
             "global_filters": global_filters,
-            "charts": valid_charts[: self.MAX_WAREHOUSE],
+            "charts": valid_charts,
             "relationships": relationships,
             "generation_report": {
                 "sheet_count": len(profiles),
                 "relationship_count": len(relationships),
-                "chart_count": min(len(valid_charts), self.MAX_WAREHOUSE),
+                "chart_count": len(valid_charts),
                 "strategy": "v3_stepped_blueprint_repair",
                 "pipeline_run_id": run_ctx.run_id,
                 "sheet_plan_warnings": sheet_plan.get("warnings", []),
@@ -247,8 +365,9 @@ class BIBusinessGenerator:
         for perspective in blueprint.get("perspectives", []):
             for scenario in perspective.get("scenarios", []):
                 for question in scenario.get("questions", []):
-                    chart = self._question_to_chart_draft(
+                    chart = await self._question_to_chart_draft(
                         profile, category_id, perspective, scenario, question, run_ctx,
+                        understanding_text, industry_guess,
                     )
                     if chart:
                         charts.append(chart)
@@ -263,7 +382,7 @@ class BIBusinessGenerator:
         )
         return charts
 
-    def _question_to_chart_draft(
+    async def _question_to_chart_draft(
         self,
         profile: Dict[str, Any],
         category_id: str,
@@ -271,12 +390,27 @@ class BIBusinessGenerator:
         scenario: Dict[str, Any],
         question: Dict[str, Any],
         run_ctx: BIPipelineRunContext,
+        understanding_text: str,
+        industry_guess: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
         qid = question.get("question_id")
         try:
             spec = self.spec_compiler.compile(profile, question, scenario, perspective)
             spec = self._apply_analysis_guards(spec, profile, question)
-            sql, summary_sql, chart_type = self.sql_builder.build(spec, profile)
+            template_sql, template_summary_sql, template_chart_type = self.sql_builder.build(spec, profile)
+            chart_type, sql, summary_sql, encoding, intent_type = await self._generate_sql_with_llm(
+                profile,
+                understanding_text,
+                industry_guess,
+                perspective,
+                scenario,
+                question,
+                spec,
+                template_sql,
+                template_summary_sql,
+                template_chart_type,
+                run_ctx,
+            )
         except ValueError as e:
             logger.info("跳过问题（无法编译 SQL）: %s — %s", qid, e)
             log_step_warn(
@@ -308,8 +442,7 @@ class BIBusinessGenerator:
 
         chart = self._chart(
             profile, category_id,
-            question.get("preferred_chart_types", [chart_type])[0]
-            if question.get("preferred_chart_types") else chart_type,
+            chart_type,
             title[:80], qtext, sql, metric, dims, time_field,
             int(question.get("priority") or 80),
             summary_sql=summary_sql,
@@ -324,14 +457,89 @@ class BIBusinessGenerator:
             "question_id": question.get("question_id"),
             "analysis_type": spec.get("analysis_type_business") or spec.get("analysis_type"),
             "analysis_intent": spec.get("analysis_intent"),
+            "intent_type": intent_type,
+            "visual_intent": spec.get("visual_intent"),
+            "field_display_policy": spec.get("field_display_policy"),
+            "required_fields": spec.get("required_fields"),
+            "encoding": encoding,
+            "sql_source": "llm_sql",
             "metric_spec": spec,
             "from_review": bool(question.get("from_review")),
         })
-        preferred = question.get("preferred_chart_types")
-        if preferred and preferred[0] in ("bar", "line", "pie", "table", "kpi"):
-            chart["chart_type"] = preferred[0]
-            chart["chartType"] = preferred[0]
         return chart
+
+    async def _generate_sql_with_llm(
+        self,
+        profile: Dict[str, Any],
+        understanding_text: str,
+        industry_guess: Dict[str, Any],
+        perspective: Dict[str, Any],
+        scenario: Dict[str, Any],
+        question: Dict[str, Any],
+        spec: Dict[str, Any],
+        template_sql: str,
+        template_summary_sql: Optional[str],
+        template_chart_type: str,
+        run_ctx: BIPipelineRunContext,
+    ) -> Tuple[str, str, Optional[str], Dict[str, Any], str]:
+        fallback = self.chart_resolver.resolve(
+            spec, profile, template_chart_type, template_sql, template_summary_sql,
+        )
+        try:
+            result = await self.sql_agent.run({
+                "question": question,
+                "metric_spec": spec,
+                "scenario_context": scenario.get("scenario_context", ""),
+                "role_name": perspective.get("role_name", ""),
+                "sheet_payload": sheet_payload_for_llm(profile, understanding_text, industry_guess),
+                "chart_type_hint": fallback[0],
+                "template_sql_fallback": template_sql,
+            })
+            sql = SQLValidator.sanitize_sql(result.get("sql", ""))
+            if not sql:
+                raise ValueError("LLM SQL 未通过安全校验")
+            summary_sql = result.get("summary_sql")
+            if summary_sql:
+                summary_sql = SQLValidator.sanitize_sql(summary_sql)
+                if not summary_sql:
+                    summary_sql = None
+            chart_type = result.get("chart_type") or fallback[0]
+            if chart_type not in self.chart_resolver.VALID_TYPES:
+                chart_type = fallback[0]
+            encoding = result.get("encoding") or fallback[3]
+            intent_type = result.get("intent_type") or fallback[4]
+            log_step_ok(
+                STEP_COMPILE_SQL,
+                "LLM SQL 生成完成",
+                run_ctx=run_ctx,
+                table_name=profile.get("table_name"),
+                sheet_name=profile.get("sheet_name"),
+                perspective_id=perspective.get("perspective_id"),
+                role_name=perspective.get("role_name"),
+                scenario_id=scenario.get("scenario_id"),
+                scenario_name=scenario.get("scenario_name"),
+                question_id=question.get("question_id"),
+                extra={
+                    "chart_type": chart_type,
+                    "intent_type": intent_type,
+                    "calculation_note": result.get("calculation_note"),
+                    "sql_preview": sql[:600],
+                    "summary_sql_preview": summary_sql[:400] if summary_sql else None,
+                },
+            )
+            return chart_type, sql, summary_sql, encoding, intent_type
+        except Exception as e:
+            log_step_warn(
+                STEP_COMPILE_SQL,
+                f"LLM SQL 生成失败，回退模板 SQL: {e}",
+                run_ctx=run_ctx,
+                table_name=profile.get("table_name"),
+                sheet_name=profile.get("sheet_name"),
+                question_id=question.get("question_id"),
+                exc=e,
+                extra={"question": question.get("question"), "template_sql": template_sql[:500]},
+            )
+            return fallback
 
     def _apply_analysis_guards(
         self, spec: Dict[str, Any], profile: Dict[str, Any], question: Dict[str, Any]
@@ -423,7 +631,14 @@ class BIBusinessGenerator:
         )
 
         if repair.get("repair_action") == "fix_sql" and repair.get("revised_sql"):
-            chart["sql"] = repair["revised_sql"].strip()
+            revised_sql = SQLValidator.sanitize_sql(repair["revised_sql"].strip())
+            if not revised_sql:
+                self._record_drop(
+                    charts_dropped, chart, failure_type,
+                    "修复 SQL 未通过安全校验", True, run_ctx, repair,
+                )
+                return None
+            chart["sql"] = revised_sql
         elif repair.get("repair_action") == "fix_question":
             revised = dict(chart.get("metric_spec") or {})
             q_patch = {
@@ -431,10 +646,14 @@ class BIBusinessGenerator:
                 "question": repair.get("revised_question") or chart.get("question"),
                 "analysis_type": repair.get("revised_analysis_type") or chart.get("analysis_type"),
                 "analysis_intent": repair.get("revised_analysis_intent") or chart.get("analysis_intent", ""),
+                "visual_intent": repair.get("revised_visual_intent") or chart.get("visual_intent", ""),
                 "sql_template_hint": repair.get("revised_sql_template_hint"),
                 "metrics": [m.get("field") if isinstance(m, dict) else m for m in repair.get("revised_metrics", [])],
                 "dimensions": [d.get("field") if isinstance(d, dict) else d for d in repair.get("revised_dimensions", [])],
                 "time_field": repair.get("revised_time_field"),
+                "preferred_chart_types": repair.get("revised_preferred_chart_types") or [],
+                "field_display_policy": repair.get("revised_field_display_policy") or "",
+                "required_fields": repair.get("revised_required_fields") or {},
             }
             scenario = {
                 "scenario_context": chart.get("scenario_context", ""),
@@ -443,10 +662,15 @@ class BIBusinessGenerator:
             try:
                 spec = self.spec_compiler.compile(profile, q_patch, scenario, perspective)
                 sql, summary_sql, chart_type = self.sql_builder.build(spec, profile)
+                chart_type, sql, summary_sql, encoding, intent_type = self.chart_resolver.resolve(
+                    spec, profile, chart_type, sql, summary_sql,
+                )
                 chart["sql"] = sql
                 chart["summary_sql"] = summary_sql
                 chart["chart_type"] = chart_type
                 chart["chartType"] = chart_type
+                chart["encoding"] = encoding
+                chart["intent_type"] = intent_type
                 chart["question"] = q_patch["question"]
                 chart["metric_spec"] = spec
             except ValueError as e:
@@ -501,6 +725,16 @@ class BIBusinessGenerator:
                 )
             return "sql_error", str(e)
         if not rows or self._rows_effectively_empty(rows):
+            if run_ctx:
+                log_step_warn(
+                    STEP_SQL_PREVIEW,
+                    "SQL 预执行结果为空",
+                    run_ctx=run_ctx,
+                    table_name=chart.get("table_name"),
+                    chart_id=chart.get("id"),
+                    question_id=chart.get("question_id"),
+                    extra={"sql": (chart.get("sql") or "")[:800]},
+                )
             return "empty_result", "查询结果为空"
         preview_rows = rows[:20]
         chart["preview"] = {"columns": list(preview_rows[0].keys()), "rows": preview_rows}
@@ -513,6 +747,21 @@ class BIBusinessGenerator:
             except Exception:
                 comparison = {}
         chart["comparison"] = comparison
+        if run_ctx:
+            log_step_ok(
+                STEP_SQL_PREVIEW,
+                "SQL 预执行通过",
+                run_ctx=run_ctx,
+                table_name=chart.get("table_name"),
+                sheet_name=chart.get("sheet_name"),
+                chart_id=chart.get("id"),
+                question_id=chart.get("question_id"),
+                extra={
+                    "row_count": len(rows),
+                    "columns": list(preview_rows[0].keys()),
+                    "chart_type": chart.get("chart_type") or chart.get("chartType"),
+                },
+            )
         return None, ""
 
     def _rows_effectively_empty(self, rows: List[Dict[str, Any]]) -> bool:
@@ -553,6 +802,8 @@ class BIBusinessGenerator:
             chart_id=chart.get("id"),
             question_id=chart.get("question_id"),
             extra={
+                "failure_type": failure_type,
+                "error_message": entry["diagnosis_reason"],
                 "repair_attempted": repair_attempted,
                 "role_name": chart.get("role_name"),
                 "scenario_name": chart.get("scenario_name"),
@@ -563,47 +814,55 @@ class BIBusinessGenerator:
 
     def _build_summary_charts(self, profile: Dict[str, Any], category_id: str) -> List[Dict[str, Any]]:
         table_name = profile["table_name"]
-        charts = []
-        count_metric = {"field": "*", "aggregation": "count", "label": "记录数"}
-        charts.append(self._chart(
-            profile, category_id, "kpi", f"{profile['sheet_name']}·记录数",
-            f"{profile['sheet_name']}共有多少条业务记录？",
-            f"SELECT COUNT(*) AS `记录数` FROM {quote_ident(table_name)}",
-            count_metric, [], None, 100,
-            summary_sql=f"SELECT COUNT(*) AS `总记录数` FROM {quote_ident(table_name)}",
-            layer="summary",
-        ))
-        for metric in self._metric_fields(profile)[:3]:
+        select_parts = ["COUNT(*) AS `记录数`"]
+        items = [{"label": "记录数", "value_field": "记录数", "format": "integer"}]
+        for metric in self._metric_fields(profile)[:4]:
             expr = numeric_expr(metric["field"])
             label = metric["label"]
-            charts.append(self._chart(
-                profile, category_id, "kpi", f"总{label}",
-                f"{profile['sheet_name']}核心指标「{label}」总量是多少？",
-                f"SELECT SUM({expr}) AS `{safe_alias('总' + label)}` FROM {quote_ident(table_name)}",
-                {"field": metric["field"], "aggregation": "sum", "label": label},
-                [], None, max(90, 99 - len(charts)),
-                summary_sql=f"SELECT SUM({expr}) AS `{safe_alias('总' + label)}` FROM {quote_ident(table_name)}",
-                layer="summary",
-            ))
+            alias = safe_alias("总" + label)
+            fmt = "percent" if self.chart_resolver.is_rate_field(label) else "number"
+            if fmt == "percent":
+                alias = safe_alias(label)
+                select_parts.append(f"ROUND(AVG({expr}), 0) AS `{alias}`")
+            else:
+                select_parts.append(f"SUM({expr}) AS `{alias}`")
+            items.append({"label": alias, "value_field": alias, "format": fmt})
+            if len(items) >= 5:
+                break
         target_pair = self._find_target_pair(self._metric_fields(profile))
-        if target_pair:
+        if target_pair and len(items) < 5:
             actual, target = target_pair
             a_expr = numeric_expr(actual["field"])
             t_expr = numeric_expr(target["field"])
-            charts.append(self._chart(
-                profile, category_id, "kpi", f"{actual['label']}达成率",
-                f"{profile['sheet_name']}实际相对目标的达成率是多少？",
-                f"SELECT ROUND(SUM({a_expr}) / NULLIF(SUM({t_expr}), 0) * 100, 2) AS `达成率` "
-                f"FROM {quote_ident(table_name)}",
-                {"field": actual["field"], "aggregation": "achievement_rate", "label": "达成率"},
-                [], None, 98,
-                layer="summary",
-            ))
-        for c in charts:
-            c["perspective_id"] = "sheet_summary"
-            c["role_name"] = "经营总览"
-            c["layer"] = "summary"
-        return charts
+            select_parts.append(
+                f"ROUND(SUM({a_expr}) / NULLIF(SUM({t_expr}), 0) * 100, 0) AS `达成率`"
+            )
+            items.append({"label": "达成率", "value_field": "达成率", "format": "percent"})
+        sql = f"SELECT {', '.join(select_parts)} FROM {quote_ident(table_name)}"
+        metric = {"field": "*", "aggregation": "kpi_group", "label": "核心指标"}
+        chart = self._chart(
+            profile, category_id, "kpi_group", f"{profile['sheet_name']}核心指标",
+            f"{profile['sheet_name']}核心经营指标总览。",
+            sql,
+            metric, [], None, 100,
+            summary_sql=sql,
+            layer="summary",
+        )
+        chart.update({
+            "perspective_id": "sheet_summary",
+            "role_name": "经营总览",
+            "layer": "summary",
+            "intent_type": "kpi_overview",
+            "items": items,
+            "layout": {"max_per_row": 5},
+            "encoding": {
+                "y": [
+                    {"field": item["value_field"], "label": item["label"], "format": item["format"]}
+                    for item in items
+                ]
+            },
+        })
+        return [chart]
 
     async def _limited(self, coro):
         async with self.sem:
@@ -716,24 +975,51 @@ class BIBusinessGenerator:
             left_metric = (self._metric_fields(left) or [{"field": "*", "label": "记录数"}])[0]
             right = profile_map[rel["right_table"]]
             right_metric = (self._metric_fields(right) or [{"field": "*", "label": "记录数"}])[0]
-            lv = "COUNT(*)" if left_metric["field"] == "*" else f"SUM({numeric_expr(left_metric['field'])})"
-            rv = "COUNT(*)" if right_metric["field"] == "*" else f"SUM({numeric_expr(right_metric['field'])})"
+            if left_metric["field"] == "*":
+                lv = "COUNT(*)"
+            else:
+                left_expr = numeric_expr(left_metric["field"]).replace(
+                    quote_ident(left_metric["field"]),
+                    f"a.{quote_ident(left_metric['field'])}",
+                )
+                lv = f"SUM({left_expr})"
+            if right_metric["field"] == "*":
+                rv = "COUNT(*)"
+            else:
+                right_expr = numeric_expr(right_metric["field"]).replace(
+                    quote_ident(right_metric["field"]),
+                    f"b.{quote_ident(right_metric['field'])}",
+                )
+                rv = f"SUM({right_expr})"
+            object_alias = safe_alias(rel["left_field"])
+            left_alias = safe_alias(f"{rel['left_sheet']}_{left_metric['label']}")
+            right_alias = safe_alias(f"{rel['right_sheet']}_{right_metric['label']}")
             sql = (
-                f"SELECT a.{quote_ident(rel['left_field'])} AS `关联对象`, {lv} AS `左表指标`, {rv} AS `右表指标` "
+                f"SELECT a.{quote_ident(rel['left_field'])} AS `{object_alias}`, "
+                f"{lv} AS `{left_alias}`, {rv} AS `{right_alias}` "
                 f"FROM {quote_ident(rel['left_table'])} a "
                 f"INNER JOIN {quote_ident(rel['right_table'])} b "
                 f"ON a.{quote_ident(rel['left_field'])} = b.{quote_ident(rel['right_field'])} "
                 f"GROUP BY a.{quote_ident(rel['left_field'])} LIMIT 20"
             )
-            charts.append(self._chart(
+            chart = self._chart(
                 left, category_id, "table", f"{rel['left_sheet']}×{rel['right_sheet']}",
-                f"关联对比：{rel['left_field']} / {rel['right_field']}",
+                f"按 {rel['left_field']} 关联{rel['left_sheet']}与{rel['right_sheet']}。",
                 sql,
                 {"field": left_metric["field"], "aggregation": "join_compare", "label": "关联"},
                 [rel["left_field"]], None, 82,
                 table_name=rel["left_table"],
                 layer="custom",
-            ))
+            )
+            chart["encoding"] = {
+                "x": {"field": object_alias, "label": object_alias, "role": "dimension"},
+                "y": [
+                    {"field": left_alias, "label": left_alias, "axis": "left", "series_type": "bar", "format": "number"},
+                    {"field": right_alias, "label": right_alias, "axis": "left", "series_type": "bar", "format": "number"},
+                ],
+            }
+            chart["intent_type"] = "relation_compare"
+            charts.append(chart)
         return categories, charts
 
     def _rank_and_layout(self, charts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -756,6 +1042,23 @@ class BIBusinessGenerator:
                 per_category[chart["category_id"]] = count + 1 if chart["on_board"] else count
         return charts
 
+    def _limit_warehouse_balanced(self, charts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if len(charts) <= self.MAX_WAREHOUSE:
+            return charts
+        buckets: Dict[str, List[Dict[str, Any]]] = {}
+        for chart in charts:
+            buckets.setdefault(chart["category_id"], []).append(chart)
+        selected: List[Dict[str, Any]] = []
+        while len(selected) < self.MAX_WAREHOUSE and any(buckets.values()):
+            for category_id in sorted(buckets.keys()):
+                bucket = buckets[category_id]
+                if not bucket:
+                    continue
+                selected.append(bucket.pop(0))
+                if len(selected) >= self.MAX_WAREHOUSE:
+                    break
+        return selected
+
     def _chart(
         self, profile, category_id, chart_type, title, question, sql, metric, dimensions,
         time_field, priority, summary_sql=None, on_board=True, table_name=None,
@@ -775,6 +1078,7 @@ class BIBusinessGenerator:
             "chart_type": chart_type,
             "chartType": chart_type,
             "layer": layer,
+            "sheet_name": profile.get("sheet_name"),
             "table_name": table_name or profile["table_name"],
             "related_tables": related_tables or [],
             "sql": sql,

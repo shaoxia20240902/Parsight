@@ -199,13 +199,23 @@ export const deleteBICategory = (fileId: string, categoryId: string) => {
 export const updateBIChart = (
   fileId: string,
   chartId: string,
-  payload: { title: string; description: string; category_id: string }
+  payload: {
+    title: string
+    description: string
+    category_id: string
+    items?: Array<Record<string, any>>
+    encoding?: Record<string, any>
+    layout?: Record<string, any>
+  }
 ) => {
   return api.patch(`/bi/charts/${chartId}`, {
     file_id: fileId,
     title: payload.title,
     description: payload.description,
     category_id: payload.category_id,
+    items: payload.items,
+    encoding: payload.encoding,
+    layout: payload.layout,
   })
 }
 

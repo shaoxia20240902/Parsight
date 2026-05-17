@@ -62,6 +62,21 @@ async def migrate_db():
                     text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
                 )
 
+        # 为 file_records 补充复合索引（消除 filesort 导致的 OOM）
+        idx_result = await conn.execute(
+            text("""
+                SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'file_records'
+                  AND INDEX_NAME = 'idx_file_records_space_upload'
+                LIMIT 1
+            """)
+        )
+        if not idx_result.fetchone():
+            await conn.execute(
+                text("CREATE INDEX idx_file_records_space_upload ON file_records (space_id, upload_time)")
+            )
+
         # 为已有空间回填 seq_id（按创建时间递增）
         result = await conn.execute(
             text("SELECT id FROM spaces WHERE seq_id IS NULL ORDER BY created_at ASC")

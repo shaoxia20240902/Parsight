@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.bi_profiler import numeric_expr, quote_ident, safe_alias
@@ -80,6 +81,10 @@ class MetricSpecCompiler:
             "role_name": (perspective or {}).get("role_name") or "",
             "question": question.get("question") or "",
             "derived_kpi_hint": question.get("derived_kpi_hint"),
+            "visual_intent": question.get("visual_intent") or "",
+            "field_display_policy": question.get("field_display_policy") or "",
+            "required_fields": question.get("required_fields") or {},
+            "preferred_chart_types": question.get("preferred_chart_types") or [],
         }
         return spec
 
@@ -101,7 +106,50 @@ class MetricSpecCompiler:
                 if f.get("data_role") == "dimension" and f.get("groupable"):
                     out.append({"field": f["field"], "label": f["field"]})
                     break
+        if role == "dimension":
+            out = [self._prefer_display_dimension(profile, item) for item in out]
         return out
+
+    def _prefer_display_dimension(self, profile: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
+        field = item.get("field", "")
+        if not self._looks_like_id(field):
+            return item
+        replacement = self._find_name_field(profile, field)
+        if replacement:
+            return {"field": replacement, "label": replacement, "source_field": field}
+        return item
+
+    def _looks_like_id(self, field: str) -> bool:
+        name = str(field).lower()
+        normalized = re.sub(r"[\s_\-]+", "", name)
+        return (
+            normalized in {"id", "编号", "编码"}
+            or normalized.endswith("id")
+            or any(k in normalized for k in ("客户id", "产品id", "商品id", "用户id", "人员id"))
+            or any(k in str(field) for k in ("编号", "编码"))
+        )
+
+    def _find_name_field(self, profile: Dict[str, Any], id_field: str) -> Optional[str]:
+        fields = profile.get("fields", [])
+        candidates = []
+        id_prefix = re.sub(r"(?i)id|编号|编码", "", str(id_field)).strip("_- ")
+        for f in fields:
+            fname = f.get("field", "")
+            if fname == id_field or f.get("data_role") not in ("dimension", "time"):
+                continue
+            score = 0
+            if any(k in fname for k in ("名称", "姓名", "名字", "客户", "产品", "商品", "区域", "城市", "部门")):
+                score += 6
+            if any(k in fname.lower() for k in ("name", "title", "label")):
+                score += 6
+            if id_prefix and id_prefix in fname:
+                score += 3
+            if f.get("groupable"):
+                score += 1
+            if score > 0:
+                candidates.append((score, fname))
+        candidates.sort(reverse=True)
+        return candidates[0][1] if candidates else None
 
     def _resolve_time_field(self, profile: Dict[str, Any], name: Optional[str]) -> Optional[Dict[str, Any]]:
         if name:
@@ -129,8 +177,10 @@ class BISQLBuilder:
             return self._period_compare_sql(spec, profile, table, mode="mom")
         if analysis_type == "yoy":
             return self._period_compare_sql(spec, profile, table, mode="yoy")
-        if analysis_type in ("share", "structure", "ranking"):
+        if analysis_type in ("share", "structure"):
             return self._dimension_agg_sql(spec, table, with_share=(analysis_type in ("share", "structure")))
+        if analysis_type == "ranking":
+            return self._ranking_sql(spec, table)
         if analysis_type == "target_achievement":
             return self._achievement_sql(spec, profile, table)
         if analysis_type == "detail":
@@ -218,7 +268,7 @@ LIMIT 3
         share_col = ""
         if with_share:
             share_col = (
-                f", ROUND(SUM({expr}) / NULLIF((SELECT SUM({expr}) FROM {table}), 0) * 100, 2) AS `占比`"
+                f", ROUND(SUM({expr}) / NULLIF((SELECT SUM({expr}) FROM {table}), 0) * 100, 0) AS `占比`"
             )
         sql = (
             f"SELECT {dim_ident} AS `{dim_label}`, SUM({expr}) AS `{metric_label}`{share_col} "
@@ -244,7 +294,7 @@ LIMIT 3
             f"FROM {table} WHERE {quote_ident(dim['field'])} IS NOT NULL "
             f"GROUP BY {quote_ident(dim['field'])} ORDER BY `{safe_alias(metric['label'])}` {order} LIMIT 10"
         )
-        return sql, None, "bar"
+        return sql, None, "ranking"
 
     def _achievement_sql(
         self, spec: Dict[str, Any], profile: Dict[str, Any], table: str

@@ -300,6 +300,18 @@ class DBService:
         )
         await self.db.commit()
 
+    async def clear_bi_config(self, file_id: str) -> None:
+        """清空 BI 看板配置，用于重新生成开始前避免继续展示旧配置。"""
+        await self.db.execute(
+            text("""
+                UPDATE file_records
+                SET bi_config = NULL
+                WHERE id = :id
+            """),
+            {"id": file_id},
+        )
+        await self.db.commit()
+
     async def clear_bi_thinking_journal(self, file_id: str) -> None:
         await self.db.execute(
             text("""
@@ -502,6 +514,28 @@ class DBService:
         )
         await self.db.commit()
         return knowledge_id
+
+    async def append_business_knowledge_to_understanding(
+        self,
+        table_name: str,
+        line: str,
+    ) -> None:
+        """Append confirmed builder knowledge to the sheet understanding markdown."""
+        understanding = await self.get_understanding_content(table_name)
+        current = (understanding or {}).get("content") or ""
+        title = "## 七 业务知识及用户偏好（重要）"
+        item = f"- {line.strip()}"
+        if not current.strip():
+            next_content = f"{title}\n\n{item}\n"
+        elif title in current:
+            next_content = current.rstrip() + f"\n{item}\n"
+        else:
+            next_content = current.rstrip() + f"\n\n{title}\n\n{item}\n"
+        await self.update_understanding_content(
+            table_name,
+            next_content,
+            verification_status=(understanding or {}).get("verification_status") or "idle",
+        )
 
     async def list_user_preferences(
         self,

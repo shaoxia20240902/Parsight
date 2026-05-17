@@ -107,6 +107,11 @@ class BIBuilderService:
             intent = IntentResult(intent="bi_supplement", requires_existing_match=False)
             return await self._run_scope_planning(message or "根据补充信息继续", session, context, intent)
 
+        if event_type == "update_chart_list":
+            chart_list = [self._normalise_draft(c, context, None) for c in payload.get("chart_list", []) if isinstance(c, dict)]
+            await self.state.save(session, chart_list=chart_list)
+            return await self._confirm_spec_reply(session, context)
+
         if event_type in {"confirm_knowledge", "confirm_preference"}:
             accepted = payload.get("accepted", True)
             card = payload.get("card") or {}
@@ -134,6 +139,24 @@ class BIBuilderService:
 
         if event_type == "confirm_generate":
             return await self._create_charts(session, context)
+
+        if event_type == "create_companion_chart":
+            draft = payload.get("chart")
+            if draft:
+                await self.state.save(session, chart_list=[self._normalise_draft(draft, context, None)])
+                return await self._create_charts(session, context)
+            return await self._confirm_spec_reply(session, context)
+
+        if event_type == "confirm_complete":
+            summary = self._completion_summary(session, context)
+            await self.state.save(session, state="completed_confirmed", scope_plan={**(session.get("scope_plan") or {}), "completion_summary": summary})
+            return {
+                "state": "completed_confirmed",
+                "reply": {
+                    "content": "已确认完成。我会把本次创建内容作为后续追问的上下文。",
+                    "blocks": [{"type": "completion_summary", "summary": summary}],
+                },
+            }
 
         return self._default_reply()
 
@@ -238,6 +261,7 @@ class BIBuilderService:
 
         cards = await self._knowledge_preference_cards(message, chart_list, context)
         if cards:
+            cards = self._enrich_knowledge_cards(cards, chart_list, context)
             knowledge_cards = [card for card in cards if card.get("card_type") == "business_knowledge"]
             preference_cards = [card for card in cards if card.get("card_type") == "user_preference"]
             await self.state.save(
@@ -319,9 +343,9 @@ class BIBuilderService:
             chart_list.append(self._draft(f"{metric}月度趋势", "trend", "line", profile, metric, dimension, time_field))
         else:
             title = f"{dimension}{metric}{'Bottom 5' if wants_bottom else 'Top 5' if wants_top else '排名'}"
-            chart_list.append(self._draft(title, "ranking_bottom" if wants_bottom else "ranking_top", "bar", profile, metric, dimension, time_field))
+            chart_list.append(self._draft(title, "ranking_bottom" if wants_bottom else "ranking_top", "ranking", profile, metric, dimension, time_field))
             if wants_top and not wants_bottom:
-                companion = self._draft(f"{dimension}{metric}Bottom 5", "ranking_bottom", "bar", profile, metric, dimension, time_field)
+                companion = self._draft(f"{dimension}{metric}Bottom 5", "ranking_bottom", "ranking", profile, metric, dimension, time_field)
                 companion.update({
                     "required": False,
                     "source": "companion_recommendation",
@@ -439,15 +463,21 @@ class BIBuilderService:
             term = payload.get("term")
             canonical = payload.get("canonical") or payload.get("mapped_to")
             if term and canonical:
+                table_name = payload.get("table_name")
                 await self.db.save_business_knowledge(
                     file_id=context.file_id,
                     term=term,
                     canonical=canonical,
-                    table_name=payload.get("table_name"),
+                    table_name=table_name,
                     knowledge_type=payload.get("knowledge_type") or "alias",
                     definition=payload.get("definition"),
                     scope=payload.get("scope") or "file",
                 )
+                if table_name:
+                    await self.db.append_business_knowledge_to_understanding(
+                        table_name,
+                        self._knowledge_line(payload),
+                    )
         if event_type == "confirm_preference":
             key = payload.get("preference_key") or "bi_builder_preference"
             value = payload.get("preference_value") or payload
@@ -477,12 +507,15 @@ class BIBuilderService:
                 "content": f"我将创建 {len(chart_list)} 张图表，请确认字段、筛选和分类。",
                 "blocks": [
                     {"type": "markdown", "content": self._chart_list_markdown(chart_list)},
+                    {
+                        "type": "sales_chart_plan",
+                        "items": self._sales_chart_cards(chart_list, context),
+                        "categories": self._category_options(context),
+                        "fields": self._editor_field_options(context),
+                    },
                     {"type": "actions", "items": [
                         {"type": "confirm_generate", "label": "确认生成"},
-                        {"type": "modify_chart_list", "label": "增减图表"},
-                        {"type": "modify_fields", "label": "调整字段"},
-                        {"type": "modify_filters", "label": "调整筛选"},
-                        {"type": "modify_category", "label": "调整分类"},
+                        {"type": "open_chart_editor", "label": "调整报表方案"},
                     ]},
                 ],
             },
@@ -530,8 +563,12 @@ class BIBuilderService:
 
         if created:
             first = created[0]
+            suggestions = self._companion_suggestions(chart_list, context)
+            if suggestions:
+                blocks.append({"type": "companion_suggestions", "items": suggestions})
             blocks.append({"type": "actions", "items": [
-                {"type": "navigate", "label": "去查看", "target": "/bi", "params": {"category_id": first.get("category_id"), "chart_id": first.get("id")}}
+                {"type": "navigate", "label": "去查看", "target": "/bi", "params": {"category_id": first.get("category_id"), "chart_id": first.get("id")}},
+                {"type": "confirm_complete", "label": "确认完成"},
             ]})
 
         return {
@@ -606,14 +643,13 @@ class BIBuilderService:
         return {}
 
     def _chart_list_markdown(self, chart_list: List[Dict[str, Any]]) -> str:
-        lines = ["| 图表 | 类型 | 指标 | 维度 | 筛选 | 推荐分类 | 写入方式 |", "|---|---|---|---|---|---|---|"]
+        lines = ["| 将创建 | 看什么 | 按什么看 | 筛选 | 放到哪里 |", "|---|---|---|---|---|"]
         for chart in chart_list:
             metric = (chart.get("metric") or {}).get("field") or "-"
             dims = "、".join(chart.get("dimensions") or []) or "-"
             filters = "、".join(str(item) for item in (chart.get("filters") or [])) or "-"
             lines.append(
-                f"| {chart.get('title', '-')} | {chart.get('chart_type') or '-'} | {metric} | {dims} | {filters} | "
-                f"{chart.get('target_category_id') or '-'} | {chart.get('write_mode') or 'append'} |"
+                f"| {chart.get('title', '-')} | {metric} | {dims} | {filters} | {chart.get('target_category_id') or '-'} |"
             )
         return "\n".join(lines)
 
@@ -691,6 +727,217 @@ class BIBuilderService:
             if category:
                 out.append({"client_chart_id": chart.get("client_chart_id"), "category_id": category_id, "category_name": category.get("name") or category.get("display_name")})
         return out
+
+    def _sales_chart_cards(self, chart_list: List[Dict[str, Any]], context: BuilderContext) -> List[Dict[str, Any]]:
+        return [
+            {
+                "client_chart_id": chart.get("client_chart_id"),
+                "title": chart.get("title") or "新建报表",
+                "business_type": self._business_type_label(chart),
+                "metric": (chart.get("metric") or {}).get("field") or "记录数",
+                "dimension": "、".join(chart.get("dimensions") or []) or "整体",
+                "filters": chart.get("filters") or [],
+                "category_id": chart.get("target_category_id"),
+                "category_name": self._category_name(chart.get("target_category_id"), context),
+                "chart_type": chart.get("chart_type"),
+                "chart_type_label": self._chart_type_label(chart.get("chart_type")),
+                "required": chart.get("required", True),
+            }
+            for chart in chart_list
+        ]
+
+    def _category_options(self, context: BuilderContext) -> List[Dict[str, Any]]:
+        return [
+            {
+                "label": category.get("name") or category.get("display_name") or category.get("id"),
+                "value": category.get("id"),
+            }
+            for category in context.categories
+        ]
+
+    def _editor_field_options(self, context: BuilderContext) -> Dict[str, List[Dict[str, Any]]]:
+        metrics: List[Dict[str, Any]] = []
+        dimensions: List[Dict[str, Any]] = []
+        times: List[Dict[str, Any]] = []
+        seen = set()
+        for profile in context.profiles:
+            for field in profile.get("fields", []):
+                name = field.get("field")
+                if not name:
+                    continue
+                key = (profile.get("table_name"), name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                item = {
+                    "label": f"{name}（{profile.get('sheet_name') or ''}）",
+                    "value": name,
+                    "table_name": profile.get("table_name"),
+                }
+                if field.get("data_role") == "metric":
+                    metrics.append(item)
+                elif field.get("data_role") == "time":
+                    times.append(item)
+                elif field.get("groupable"):
+                    dimensions.append(item)
+        return {"metrics": metrics[:30], "dimensions": dimensions[:40], "times": times[:20]}
+
+    def _business_type_label(self, chart: Dict[str, Any]) -> str:
+        analysis_type = chart.get("analysis_type") or ""
+        if analysis_type in {"ranking_top", "ranking_bottom"}:
+            return "看谁最好 / 谁最差"
+        if analysis_type == "trend":
+            return "看变化趋势"
+        if analysis_type == "structure":
+            return "看占比结构"
+        if analysis_type == "detail":
+            return "找明细和问题"
+        if (chart.get("chart_type") or "") in {"kpi", "kpi_group"}:
+            return "看整体情况"
+        if (chart.get("chart_type") or "") == "combo":
+            return "看目标完成情况"
+        return "业务报表"
+
+    def _chart_type_label(self, chart_type: Optional[str]) -> str:
+        return {
+            "kpi_group": "核心指标卡",
+            "kpi": "核心指标卡",
+            "ranking": "排名榜",
+            "bar": "对比图",
+            "line": "趋势图",
+            "pie": "占比图",
+            "combo": "目标达成图",
+            "table": "汇总表",
+            "detail_table": "明细清单",
+        }.get(chart_type or "", "报表")
+
+    def _category_name(self, category_id: Optional[str], context: BuilderContext) -> str:
+        category = next((c for c in context.categories if c.get("id") == category_id), None)
+        return (category or {}).get("name") or (category or {}).get("display_name") or category_id or "未分类"
+
+    def _enrich_knowledge_cards(
+        self,
+        cards: List[Dict[str, Any]],
+        chart_list: List[Dict[str, Any]],
+        context: BuilderContext,
+    ) -> List[Dict[str, Any]]:
+        recommended_table = None
+        for chart in chart_list:
+            if chart.get("table_name"):
+                recommended_table = chart["table_name"]
+                break
+        recommended_table = recommended_table or (context.sheets[0]["table_name"] if context.sheets else None)
+        sheet_options = [
+            {
+                "label": sheet.get("sheet_name") or sheet.get("table_name"),
+                "value": sheet.get("table_name"),
+            }
+            for sheet in context.sheets
+        ]
+        for card in cards:
+            payload = card.setdefault("payload", {})
+            if card.get("card_type") == "business_knowledge":
+                payload.setdefault("table_name", recommended_table)
+                card["sheet_options"] = sheet_options
+                card["recommended_table_name"] = payload.get("table_name")
+        return cards
+
+    def _knowledge_line(self, payload: Dict[str, Any]) -> str:
+        term = payload.get("term")
+        canonical = payload.get("canonical") or payload.get("mapped_to")
+        definition = payload.get("definition")
+        if definition:
+            return f"“{term}”指“{canonical}”：{definition}。"
+        return f"“{term}”指“{canonical}”。"
+
+    def _companion_suggestions(self, chart_list: List[Dict[str, Any]], context: BuilderContext) -> List[Dict[str, Any]]:
+        suggestions: List[Dict[str, Any]] = []
+        for chart in chart_list:
+            metric = (chart.get("metric") or {}).get("field") or "记录数"
+            dims = chart.get("dimensions") or []
+            dim = dims[0] if dims else ""
+            if chart.get("analysis_type") == "ranking_top" and dim:
+                bottom = dict(chart)
+                bottom["client_chart_id"] = f"draft_{uuid.uuid4().hex[:8]}"
+                bottom["title"] = f"{dim}{metric}Bottom 10"
+                bottom["analysis_type"] = "ranking_bottom"
+                bottom["limit"] = 10
+                suggestions.append({
+                    "title": bottom["title"],
+                    "reason": "销售看 Top 的同时，通常也需要看到尾部客户或产品。",
+                    "chart": bottom,
+                })
+            profile = self._profile_for_table(chart.get("table_name"), context)
+            if profile:
+                for next_dim in self._alternative_dimensions(profile, exclude=set(dims))[:2]:
+                    alt = dict(chart)
+                    alt["client_chart_id"] = f"draft_{uuid.uuid4().hex[:8]}"
+                    alt["title"] = f"{next_dim}{metric}Top 10"
+                    alt["dimensions"] = [next_dim]
+                    alt["analysis_type"] = "ranking_top"
+                    alt["chart_type"] = "ranking"
+                    alt["limit"] = 10
+                    suggestions.append({
+                        "title": alt["title"],
+                        "reason": f"换成按{next_dim}看，能补足另一个销售视角。",
+                        "chart": alt,
+                    })
+                if chart.get("time_field"):
+                    trend = dict(chart)
+                    trend["client_chart_id"] = f"draft_{uuid.uuid4().hex[:8]}"
+                    trend["title"] = f"{metric}趋势"
+                    trend["analysis_type"] = "trend"
+                    trend["chart_type"] = "line"
+                    suggestions.append({
+                        "title": trend["title"],
+                        "reason": "排名说明当前结果，趋势能看变化方向。",
+                        "chart": trend,
+                    })
+        deduped = []
+        seen = set()
+        for item in suggestions:
+            if item["title"] in seen:
+                continue
+            seen.add(item["title"])
+            deduped.append(item)
+        return deduped[:5]
+
+    def _profile_for_table(self, table_name: Optional[str], context: BuilderContext) -> Optional[Dict[str, Any]]:
+        for profile in context.profiles:
+            if profile.get("table_name") == table_name:
+                return profile
+        return context.profiles[0] if context.profiles else None
+
+    def _alternative_dimensions(self, profile: Dict[str, Any], exclude: set) -> List[str]:
+        names = []
+        for field in profile.get("fields", []):
+            name = field.get("field")
+            if not name or name in exclude:
+                continue
+            if field.get("data_role") == "dimension" and field.get("groupable"):
+                names.append(name)
+        priority = ("客户", "产品", "区域", "渠道", "销售", "部门", "品类")
+        names.sort(key=lambda n: next((i for i, p in enumerate(priority) if p in n), 99))
+        return names
+
+    def _completion_summary(self, session: Dict[str, Any], context: BuilderContext) -> Dict[str, Any]:
+        chart_list = session.get("chart_list") or []
+        active_fields = set()
+        for chart in chart_list:
+            metric = (chart.get("metric") or {}).get("field")
+            if metric:
+                active_fields.add(metric)
+            active_fields.update(chart.get("dimensions") or [])
+            if chart.get("time_field"):
+                active_fields.add(chart["time_field"])
+        return {
+            "goal": "创建销售业务报表",
+            "created_chart_ids": session.get("created_chart_ids") or [],
+            "created_charts": [chart.get("title") for chart in chart_list if chart.get("title")],
+            "active_fields": sorted(active_fields),
+            "business_context": "后续追问会优先沿用本次报表的指标、对象、筛选和分类。",
+            "file_id": context.file_id,
+        }
 
     def _normalise_draft(
         self,

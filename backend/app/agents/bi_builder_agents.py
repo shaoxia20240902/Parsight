@@ -11,7 +11,7 @@ import json
 from typing import Any, Dict, List
 
 from app.agents.base import BaseAgent
-from app.config import LLM_MODEL_QWEN_PRIMARY
+from app.config import LLM_MODEL_DEEPSEEK_PRIMARY
 from app.services.llm_client import LLMClient
 
 BI_BUILDER_INTENT_ROUTER_PROMPT = """你是 BI 构建者的意图路由器。
@@ -125,7 +125,7 @@ class _LocalBIBuilderJSONAgent(BaseAgent):
             temperature=self.temperature,
             max_tokens=self.max_tokens,
             timeout=25.0,
-            model_override=LLM_MODEL_QWEN_PRIMARY,
+            model_override=LLM_MODEL_DEEPSEEK_PRIMARY,
         )
 
 

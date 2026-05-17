@@ -2,6 +2,7 @@
 BI 看板路由 - 智能分类 & 图表数据查询
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -12,12 +13,20 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.database import get_db
+from app.models.database import async_session, get_db
 from app.services.db_service import DBService
 from app.agents.bi_agent import BIClassificationAgent
 from app.services.bi_generation import BIBusinessGenerator, UnderstandingNotReadyError
 from app.services.bi_understanding_gate import check_understanding_ready, understanding_gate_http_detail
 from app.services.bi_profiler import quote_ident
+from app.services.bi_pipeline_logger import (
+    BIPipelineRunContext,
+    STEP_REPAIR,
+    STEP_SQL_PREVIEW,
+    log_step_error,
+    log_step_ok,
+)
+from app.utils.sql_validator import SQLValidator
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +66,9 @@ class UpdateChartRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=80)
     description: str = Field("", max_length=500)
     category_id: str = Field(..., min_length=1)
+    items: Optional[List[Dict[str, Any]]] = None
+    encoding: Optional[Dict[str, Any]] = None
+    layout: Optional[Dict[str, Any]] = None
 
 
 @router.post("/generate/{file_id}")
@@ -80,8 +92,15 @@ async def generate_bi_config(file_id: str, db: AsyncSession = Depends(get_db)):
 
     async def event_generator():
         try:
+            await db_service.clear_bi_config(file_id)
             await db_service.clear_bi_thinking_journal(file_id)
             yield f"data: {json.dumps({'step': 'bi_start', 'status': 'processing'}, ensure_ascii=False)}\n\n"
+            persist_lock = asyncio.Lock()
+
+            async def persist_thinking_entry(entry: Dict[str, Any]) -> None:
+                async with persist_lock:
+                    async with async_session() as persist_db:
+                        await DBService(persist_db).append_bi_thinking_entry(file_id, entry)
 
             sheets_data = []
             for meta in sheet_metas:
@@ -131,6 +150,7 @@ async def generate_bi_config(file_id: str, db: AsyncSession = Depends(get_db)):
                 bi_config = await BIBusinessGenerator(db_service).generate(
                     file_id,
                     sheets_data,
+                    on_thinking_entry=persist_thinking_entry,
                 )
             except UnderstandingNotReadyError as e:
                 yield f"data: {json.dumps({'step': 'error', 'status': 'error', 'message': '表理解尚未完成', **understanding_gate_http_detail(e.pending_sheets)}, ensure_ascii=False)}\n\n"
@@ -778,6 +798,12 @@ async def update_chart_metadata(
     target_chart["description"] = description
     target_chart["category_id"] = new_category_id
     target_chart["categoryId"] = new_category_id
+    if req.items is not None:
+        target_chart["items"] = req.items[:10]
+    if req.encoding is not None:
+        target_chart["encoding"] = req.encoding
+    if req.layout is not None:
+        target_chart["layout"] = req.layout
 
     await db_service.update_bi_config(req.file_id, bi_config)
     return {
@@ -789,6 +815,9 @@ async def update_chart_metadata(
             "description": description,
             "category_id": new_category_id,
             "categoryId": new_category_id,
+            "items": target_chart.get("items"),
+            "encoding": target_chart.get("encoding"),
+            "layout": target_chart.get("layout"),
         },
     }
 
@@ -800,6 +829,7 @@ async def regenerate_chart(
 ):
     """根据用户需求重新生成单个图表配置"""
     db_service = DBService(db)
+    run_ctx = BIPipelineRunContext(req.file_id)
 
     # 验证文件存在
     file_record = await db_service.get_file_record(req.file_id)
@@ -832,11 +862,29 @@ async def regenerate_chart(
 
     # 调用 BI Agent 重新生成
     try:
+        log_step_ok(
+            STEP_REPAIR,
+            "开始单图重新生成",
+            run_ctx=run_ctx,
+            table_name=target_chart.get("table_name"),
+            sheet_name=target_chart.get("sheet_name"),
+            chart_id=req.chart_id,
+            question_id=target_chart.get("question_id"),
+            extra={
+                "user_requirement": req.user_requirement,
+                "old_chart_type": target_chart.get("chart_type") or target_chart.get("chartType"),
+                "old_sql_preview": (target_chart.get("sql") or "")[:600],
+            },
+        )
         new_chart = await bi_agent.regenerate_chart(
             user_requirement=req.user_requirement,
             current_chart=target_chart,
             sheet_meta=sheet_meta,
         )
+        sanitized_sql = SQLValidator.sanitize_sql(new_chart.get("sql", ""))
+        if not sanitized_sql:
+            raise ValueError("重生成 SQL 未通过只读安全校验")
+        new_chart["sql"] = sanitized_sql
         preview_rows = await db_service.execute_query(new_chart["sql"])
         if not preview_rows:
             raise ValueError("新图表 SQL 执行成功但结果为空")
@@ -845,9 +893,52 @@ async def regenerate_chart(
             "rows": preview_rows[:20],
         }
         new_chart["tablePreview"] = new_chart["preview"]
+        new_chart["chartType"] = new_chart.get("chart_type")
+        new_chart["category_id"] = target_chart.get("category_id") or target_chart.get("categoryId")
+        new_chart["categoryId"] = new_chart["category_id"]
+        new_chart["sheet_name"] = target_chart.get("sheet_name")
+        new_chart["summary_sql"] = new_chart.get("summary_sql") or target_chart.get("summary_sql")
+        new_chart["role_name"] = target_chart.get("role_name")
+        new_chart["scenario_name"] = target_chart.get("scenario_name")
+        new_chart["question_id"] = target_chart.get("question_id")
+        new_chart["on_board"] = target_chart.get("on_board", target_chart.get("onBoard", True))
+        new_chart["onBoard"] = new_chart["on_board"]
+        new_chart["board_order"] = target_chart.get("board_order", target_chart.get("boardOrder", 0))
+        new_chart["boardOrder"] = new_chart["board_order"]
+        new_chart["default_category_id"] = target_chart.get("default_category_id")
+        new_chart["layer"] = target_chart.get("layer")
+        log_step_ok(
+            STEP_SQL_PREVIEW,
+            "单图重新生成 SQL 预执行通过",
+            run_ctx=run_ctx,
+            table_name=new_chart.get("table_name"),
+            sheet_name=new_chart.get("sheet_name"),
+            chart_id=req.chart_id,
+            question_id=new_chart.get("question_id"),
+            extra={
+                "chart_type": new_chart.get("chart_type"),
+                "row_count": len(preview_rows),
+                "columns": list(preview_rows[0].keys()),
+                "sql_preview": sanitized_sql[:600],
+            },
+        )
     except Exception as e:
         error_detail = traceback.format_exc()
         logger.error(f"图表重新生成错误: {error_detail}")
+        log_step_error(
+            STEP_REPAIR,
+            f"单图重新生成失败: {e}",
+            run_ctx=run_ctx,
+            table_name=(target_chart or {}).get("table_name"),
+            sheet_name=(target_chart or {}).get("sheet_name"),
+            chart_id=req.chart_id,
+            question_id=(target_chart or {}).get("question_id"),
+            exc=e,
+            extra={
+                "user_requirement": req.user_requirement,
+                "old_sql_preview": ((target_chart or {}).get("sql") or "")[:600],
+            },
+        )
         raise HTTPException(status_code=500, detail=f"AI生成失败: {str(e)}")
 
     # 保留原图表 ID

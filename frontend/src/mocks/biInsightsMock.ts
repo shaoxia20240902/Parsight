@@ -1,14 +1,14 @@
 /** 洞察看板 Mock 数据（前端调试专用，后续对接真实 BI API） */
 
 export const BI_MAX_BOARD_PER_CATEGORY = 10
-export const BI_MAX_WAREHOUSE_TOTAL = 40
+export const BI_MAX_WAREHOUSE_TOTAL = 100
 /** Sheet 对应分类上限（与上传 Excel 的 Sheet 一一对应） */
 export const BI_MAX_SHEET_CATEGORIES = 5
 /** 用户可自定义添加的分类上限 */
 export const BI_MAX_CUSTOM_CATEGORIES = 3
 export const BI_MAX_CATEGORIES_TOTAL = BI_MAX_SHEET_CATEGORIES + BI_MAX_CUSTOM_CATEGORIES
 
-export type BIChartType = 'bar' | 'line' | 'pie' | 'table' | 'kpi'
+export type BIChartType = 'kpi_group' | 'bar' | 'line' | 'pie' | 'combo' | 'ranking' | 'table' | 'detail_table' | 'kpi'
 export type BICategorySource = 'sheet' | 'custom'
 
 export interface BICategory {
@@ -43,6 +43,10 @@ export interface BIChartItem {
   boardOrder?: number
   /** 图表独立筛选（优先于全局） */
   chartFilters?: Record<string, string>
+  intentType?: string
+  encoding?: Record<string, any>
+  items?: Array<{ label: string; value_field: string; format?: string }>
+  layout?: { max_per_row?: number }
   tablePreview: BITablePreview
   /** ECharts 配置（Mock 渲染） */
   chartMock: {

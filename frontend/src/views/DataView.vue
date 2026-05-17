@@ -168,6 +168,7 @@
                         <el-icon v-if="index === activeRelationsStageIndex" class="stage-progress-spinner is-loading">
                           <Loading />
                         </el-icon>
+                        <span v-else class="stage-progress-index">{{ index + 1 }}</span>
                       </span>
                       <span class="stage-progress-label">{{ stage.title }}</span>
                     </div>
@@ -309,6 +310,7 @@
                         <el-icon v-if="index === activeUnderstandingStageIndex" class="stage-progress-spinner is-loading">
                           <Loading />
                         </el-icon>
+                        <span v-else class="stage-progress-index">{{ index + 1 }}</span>
                       </span>
                       <span class="stage-progress-label">{{ stage.title }}</span>
                     </div>
@@ -751,6 +753,9 @@ async function loadTables() {
   try {
     const res = await getTables(currentSpaceId.value)
     tables.value = res.data.data || []
+    if (tables.value.length > 0 && !activeTable.value && !relationsMode.value) {
+      selectTable(tables.value[0])
+    }
   } catch (e) {
     console.error('加载表列表失败', e)
   } finally {
@@ -1785,63 +1790,76 @@ onUnmounted(() => {
 }
 
 .stage-progress {
-  padding: 12px 14px;
-  margin-bottom: 18px;
-  background: var(--dv-surface-muted);
-  border: 1px solid var(--dv-border);
-  border-radius: 10px;
+  --stage-bg-top: #FFFCF7;
+  --stage-bg-bottom: #F7F1E8;
+  --stage-border: #E3D8CA;
+  --stage-text: #2B211B;
+  --stage-muted: #7B6F65;
+  --stage-faint: #A69A90;
+  --stage-line: #E7DCCF;
+  --stage-accent: #D97757;
+  --stage-accent-strong: #B85F43;
+  padding: 24px 28px 22px;
+  margin-bottom: 28px;
+  font-family: var(--font-family);
+  background: linear-gradient(180deg, var(--stage-bg-top) 0%, var(--stage-bg-bottom) 100%);
+  border: 1px solid var(--stage-border);
+  border-radius: 16px;
+  box-shadow: 0 12px 34px rgba(66, 45, 31, 0.08);
 }
 
 .stage-progress-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
+  gap: 24px;
+  margin-bottom: 24px;
 }
 
 .stage-progress-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--dv-text);
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--stage-text);
+  letter-spacing: 0;
   white-space: nowrap;
 }
 
 .stage-progress-desc {
   min-width: 0;
-  font-size: 12px;
+  font-size: 16px;
   line-height: 1.4;
-  color: var(--dv-muted);
+  color: var(--stage-muted);
   text-align: right;
 }
 
 .stage-progress-track {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  column-gap: 8px;
+  column-gap: 18px;
 }
 
 .stage-progress-item {
   position: relative;
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
   min-width: 0;
 }
 
 .stage-progress-item:not(:last-child)::after {
   content: "";
   position: absolute;
-  left: calc(100% + 2px);
-  right: -6px;
-  top: 8px;
-  height: 2px;
-  background: #E7E1D8;
+  left: 34px;
+  right: calc(-100% + 18px);
+  top: 14px;
+  height: 4px;
+  background: var(--stage-line);
   border-radius: 999px;
 }
 
 .stage-progress-item.complete:not(:last-child)::after {
-  background: var(--dv-accent);
+  background: var(--stage-accent);
 }
 
 .stage-progress-dot {
@@ -1850,22 +1868,38 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
-  flex: 0 0 18px;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
   border-radius: 50%;
-  background: #E7E1D8;
-  border: 2px solid var(--dv-surface-muted);
+  background: var(--stage-line);
+  border: 4px solid var(--stage-bg-top);
+  box-shadow: 0 3px 10px rgba(66, 45, 31, 0.14);
 }
 
 .stage-progress-item.complete .stage-progress-dot,
 .stage-progress-item.active .stage-progress-dot {
-  background: var(--dv-accent);
+  background: var(--stage-accent);
+}
+
+.stage-progress-item.active .stage-progress-dot {
+  box-shadow: 0 0 0 6px rgba(217, 119, 87, 0.14), 0 6px 16px rgba(184, 95, 67, 0.22);
 }
 
 .stage-progress-spinner {
-  font-size: 12px;
+  font-size: 17px;
   color: #fff;
+}
+
+.stage-progress-index {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+}
+
+.stage-progress-item.pending .stage-progress-index {
+  color: var(--stage-muted);
 }
 
 .stage-progress-label {
@@ -1873,14 +1907,18 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--dv-faint);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--stage-faint);
 }
 
 .stage-progress-item.complete .stage-progress-label,
 .stage-progress-item.active .stage-progress-label {
-  color: var(--dv-text);
+  color: var(--stage-text);
+}
+
+.stage-progress-item.active .stage-progress-label {
+  color: var(--stage-accent-strong);
 }
 
 .verify-badge {

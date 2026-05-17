@@ -220,7 +220,9 @@ async def bi_builder(request: BIBuilderRequest, db: AsyncSession = Depends(get_d
 
     builder_session_id = request.session_id or str(uuid.uuid4())
     request.session_id = builder_session_id
-    await save_chat_message(db, request.space_id, request.file_id, "user", request.message, mode="builder", session_id=builder_session_id)
+    event_type = (request.event or {}).get("type", "user_message")
+    if event_type == "user_message" and request.message.strip():
+        await save_chat_message(db, request.space_id, request.file_id, "user", request.message, mode="builder", session_id=builder_session_id)
 
     file_record = await db_service.get_file_record(request.file_id)
     if not file_record:

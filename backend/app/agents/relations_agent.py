@@ -7,7 +7,7 @@ import json
 import logging
 from typing import Any, Dict, List
 
-from app.config import AGENT_MAX_RETRIES, LLM_MODEL_QWEN_PRIMARY
+from app.config import AGENT_MAX_RETRIES, LLM_MODEL_DEEPSEEK_PRIMARY
 from app.services.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -215,7 +215,7 @@ class RelationsAnalysisAgent:
                     temperature=0.35,
                     max_tokens=max_tokens,
                     timeout=timeout,
-                    model_override=LLM_MODEL_QWEN_PRIMARY,
+                    model_override=LLM_MODEL_DEEPSEEK_PRIMARY,
                 )
             except Exception as e:
                 last_error = e
@@ -239,7 +239,7 @@ class RelationsAnalysisAgent:
                     temperature=0.2,
                     max_tokens=2048,
                     timeout=60.0,
-                    model_override=LLM_MODEL_QWEN_PRIMARY,
+                    model_override=LLM_MODEL_DEEPSEEK_PRIMARY,
                 )
             except Exception as e:
                 last_error = e

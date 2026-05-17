@@ -143,6 +143,7 @@
               @toggle-expand="toggleExpand"
               @move-to-warehouse="moveToWarehouse"
               @update-chart-filters="updateChartFilters"
+              @update-kpi-items="updateKpiItems"
               @dragstart="onCardDragStart"
               @dragend="onCardDragEnd"
             />
@@ -185,7 +186,7 @@ import {
   type BICategory,
   type BIGlobalFilterField
 } from '../../mocks/biInsightsMock'
-import { createBICategory, deleteBICategory, getBIChartData, updateBICategory } from '../../api'
+import { createBICategory, deleteBICategory, getBIChartData, updateBICategory, updateBIChart } from '../../api'
 import BIChartCard from './BIChartCard.vue'
 import BIWarehouseModal, { type BIChartEditPayload } from './BIWarehouseModal.vue'
 
@@ -368,6 +369,27 @@ function updateChartFilters(id: string, filters: Record<string, string>) {
   }
 }
 
+async function updateKpiItems(id: string, items: Array<{ label: string; value_field: string; format?: string }>) {
+  const c = charts.value.find((x) => x.id === id)
+  if (!c) return
+  const previous = c.items ? c.items.map((item) => ({ ...item })) : []
+  c.items = items
+  try {
+    await updateBIChart(props.fileId, id, {
+      title: c.title,
+      description: c.question,
+      category_id: c.categoryId,
+      items,
+      encoding: c.encoding,
+      layout: c.layout
+    })
+    ElMessage.success('已保存指标卡片')
+  } catch (e: any) {
+    c.items = previous
+    ElMessage.error(e.response?.data?.detail || e.message || '保存指标卡片失败')
+  }
+}
+
 function onCardDragStart(id: string, e: DragEvent) {
   draggingId.value = id
   e.dataTransfer?.setData('text/plain', id)
@@ -485,9 +507,13 @@ function normalizeConfig(config: any) {
       sql: chart.sql || '',
       onBoard: chart.on_board ?? chart.onBoard ?? true,
       collapsed: chart.collapsed ?? false,
-      expanded: chart.expanded ?? ['table', 'bar', 'line'].includes(chartType),
+      expanded: chart.expanded ?? ['table', 'detail_table', 'bar', 'line', 'combo', 'ranking', 'kpi_group'].includes(chartType),
       boardOrder: chart.board_order ?? chart.boardOrder ?? i,
       chartFilters: chart.chartFilters || {},
+      intentType: chart.intent_type || chart.intentType,
+      encoding: chart.encoding || {},
+      items: chart.items || [],
+      layout: chart.layout || {},
       tablePreview: {
         columns: preview.columns || [],
         rows: preview.rows || []
@@ -511,7 +537,7 @@ function buildChartMock(chartType: string, preview: { columns: string[]; rows: R
   const columns = preview.columns || []
   const rows = preview.rows || []
   if (!rows.length || columns.length === 0) return {}
-  if (chartType === 'kpi') {
+  if (chartType === 'kpi' || chartType === 'kpi_group') {
     const value = rows[0]?.[columns[0]]
     return { kpiValue: formatValue(value), kpiSub: '' }
   }

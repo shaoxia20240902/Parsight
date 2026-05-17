@@ -7,6 +7,8 @@ BI 生成流水线专用本地日志 — 写入 backend/logs/bi_pipeline.log
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import logging
 import traceback
@@ -52,6 +54,13 @@ def _init_logger() -> logging.Logger:
 
 
 _bi_log = _init_logger()
+
+
+def _consume_task_exception(task: "asyncio.Task[Any]") -> None:
+    try:
+        task.exception()
+    except asyncio.CancelledError:
+        pass
 
 
 class BIPipelineRunContext:
@@ -164,7 +173,13 @@ def log_bi_event(
             persist = getattr(run_ctx, "persist_journal_entry", None)
             if callable(persist):
                 try:
-                    persist(entry)
+                    result = persist(entry)
+                    if inspect.isawaitable(result):
+                        try:
+                            task = asyncio.get_running_loop().create_task(result)
+                            task.add_done_callback(_consume_task_exception)
+                        except RuntimeError:
+                            pass
                 except Exception:
                     pass
 

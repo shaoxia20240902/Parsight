@@ -7,6 +7,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form, Q
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
+from sqlalchemy.orm import load_only
 from sqlalchemy.exc import IntegrityError
 from app.models.database import get_db
 from app.models.user import User
@@ -405,7 +406,10 @@ async def list_files(
     db: AsyncSession = Depends(get_db)
 ):
     """获取文件列表（可按空间过滤）"""
-    query = select(FileRecord).order_by(FileRecord.upload_time.desc())
+    query = select(FileRecord).options(
+        load_only(FileRecord.id, FileRecord.filename, FileRecord.upload_time,
+                  FileRecord.sheet_count, FileRecord.status, FileRecord.space_id)
+    ).order_by(FileRecord.upload_time.desc())
     if space_id:
         query = query.where(FileRecord.space_id == space_id)
     result = await db.execute(query)

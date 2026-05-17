@@ -6,13 +6,17 @@
         <el-icon><User /></el-icon>
         <span>用户管理</span>
       </router-link>
+      <router-link to="/admin/logs" class="nav-item" :class="{ active: route.path.startsWith('/admin/logs') }">
+        <el-icon><Tickets /></el-icon>
+        <span>日志中心</span>
+      </router-link>
     </div>
   </nav>
 </template>
 
 <script setup lang="ts">
 import { useRoute } from 'vue-router'
-import { User } from '@element-plus/icons-vue'
+import { Tickets, User } from '@element-plus/icons-vue'
 
 const route = useRoute()
 </script>

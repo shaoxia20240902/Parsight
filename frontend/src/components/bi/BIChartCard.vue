@@ -136,15 +136,12 @@
     </header>
 
     <div v-if="!chart.collapsed" class="chart-card__body">
-      <BIMockChart
-        v-if="chart.chartType !== 'table' && chart.chartType !== 'kpi'"
+      <BIChartRenderer
+        v-if="!['table', 'detail_table'].includes(chart.chartType)"
         :chart="chart"
         :visible="true"
+        @update-kpi-items="(items) => $emit('update-kpi-items', chart.id, items)"
       />
-      <div v-else-if="chart.chartType === 'kpi'" class="kpi-block">
-        <span class="kpi-value">{{ chart.chartMock.kpiValue }}</span>
-        <span class="kpi-sub">{{ chart.chartMock.kpiSub }}</span>
-      </div>
       <BIMiniTablePreview v-else :preview="chart.tablePreview" :max-rows="6" layout="board" />
     </div>
   </article>
@@ -157,7 +154,7 @@ import {
   ArrowDown, ArrowUp, Box, ChatDotRound, Filter, Rank, FullScreen, Crop, Close
 } from '@element-plus/icons-vue'
 import type { BIChartItem, BIGlobalFilterField } from '../../mocks/biInsightsMock'
-import BIMockChart from './BIMockChart.vue'
+import BIChartRenderer from './BIChartRenderer.vue'
 import BIMiniTablePreview from './BIMiniTablePreview.vue'
 
 const props = defineProps<{
@@ -172,6 +169,7 @@ const emit = defineEmits<{
   'toggle-expand': [id: string]
   'move-to-warehouse': [id: string]
   'update-chart-filters': [id: string, filters: Record<string, string>]
+  'update-kpi-items': [id: string, items: Array<{ label: string; value_field: string; format?: string }>]
   dragstart: [id: string, event: DragEvent]
   dragend: []
 }>()

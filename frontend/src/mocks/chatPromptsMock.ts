@@ -39,7 +39,7 @@ export const DEEP_PROMPT_QUESTIONS: string[] = [
 ]
 
 export const BUILDER_PROMPT_QUESTIONS: string[] = [
-  '创建一张各区域月度销售额对比的柱状图，按月份展示',
-  '生成订单状态分布的饼图，并放在「订单流水」分类看板',
-  '搭建一个 KPI 卡片展示本月总销售额，并配一条近 6 个月趋势折线'
+  '我想看客户销售额 Top10，同时准备 Bottom10',
+  '帮我看各区域本月销售额对比，以及近 6 个月趋势',
+  '列出还没回款的客户清单，并放到销售分析里'
 ]

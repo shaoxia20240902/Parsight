@@ -18,16 +18,21 @@ class SQLValidator:
         # 去除注释和多余空白
         sql_clean = cls._clean_sql(sql)
 
-        # 检查是否以SELECT开头
-        if not sql_clean.upper().startswith("SELECT"):
+        upper = sql_clean.upper()
+
+        # 检查是否以 SELECT 或 WITH ... SELECT 开头
+        if not (upper.startswith("SELECT") or upper.startswith("WITH")):
             return False
 
         # 检查是否包含禁止的关键字
         for keyword in cls.FORBIDDEN_KEYWORDS:
             # 使用词边界匹配，避免误匹配
             pattern = r'\b' + keyword + r'\b'
-            if re.search(pattern, sql_clean.upper()):
+            if re.search(pattern, upper):
                 return False
+
+        if upper.startswith("WITH") and "SELECT" not in upper:
+            return False
 
         return True
 

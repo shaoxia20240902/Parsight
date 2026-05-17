@@ -19,8 +19,8 @@ from typing import Any, Dict, List, Optional
 from app.agents.base import BaseAgent
 from app.services.llm_client import LLMClient
 from app.config import (
-    LLM_MODEL_QWEN_PRIMARY,
-    LLM_MODEL_QWEN_ALT,
+    LLM_MODEL_DEEPSEEK_PRIMARY,
+    LLM_MODEL_DEEPSEEK_ALT,
     AGENT_MAX_RETRIES,
 )
 
@@ -72,7 +72,7 @@ async def _call_llm_with_retry(
     if max_retries is None:
         max_retries = AGENT_MAX_RETRIES
 
-    model = model or LLM_MODEL_QWEN_PRIMARY
+    model = model or LLM_MODEL_DEEPSEEK_PRIMARY
     last_error = None
 
     for attempt in range(max_retries + 1):
@@ -164,7 +164,7 @@ class LocalSheetSummaryAgent(BaseAgent):
 
         result = await _call_llm_with_retry(
             self.llm, messages,
-            model=LLM_MODEL_QWEN_PRIMARY,
+            model=LLM_MODEL_DEEPSEEK_PRIMARY,
             temperature=0.3,
             max_tokens=2048,
             timeout=20.0,
@@ -233,7 +233,7 @@ Sheet 总结:
 
         result = await _call_llm_with_retry(
             self.llm, messages,
-            model=LLM_MODEL_QWEN_ALT,
+            model=LLM_MODEL_DEEPSEEK_ALT,
             temperature=0.2,
             max_tokens=2048,
             timeout=15.0,
@@ -348,7 +348,7 @@ class LocalRoleDecompositionAgent(BaseAgent):
 
         result = await _call_llm_with_retry(
             self.llm, messages,
-            model=LLM_MODEL_QWEN_PRIMARY,
+            model=LLM_MODEL_DEEPSEEK_PRIMARY,
             temperature=0.5,
             max_tokens=2048,
             timeout=20.0,
@@ -429,7 +429,7 @@ class LocalSubQuestionSelectorAgent(BaseAgent):
 
         result = await _call_llm_with_retry(
             self.llm, messages,
-            model=LLM_MODEL_QWEN_ALT,
+            model=LLM_MODEL_DEEPSEEK_ALT,
             temperature=0.3,
             max_tokens=3072,
             timeout=20.0,
@@ -534,7 +534,7 @@ class LocalSQLGeneratorAgent(BaseAgent):
 
         result = await _call_llm_with_retry(
             self.llm, messages,
-            model=LLM_MODEL_QWEN_PRIMARY,
+            model=LLM_MODEL_DEEPSEEK_PRIMARY,
             temperature=0.2,
             max_tokens=4096,
             timeout=30.0,
@@ -614,7 +614,7 @@ class LocalChartGeneratorAgent(BaseAgent):
 
         result = await _call_llm_with_retry(
             self.llm, messages,
-            model=LLM_MODEL_QWEN_ALT,
+            model=LLM_MODEL_DEEPSEEK_ALT,
             temperature=0.3,
             max_tokens=4096,
             timeout=20.0,
@@ -703,7 +703,7 @@ class LocalReportGeneratorAgent(BaseAgent):
 
         result = await _call_llm_with_retry(
             self.llm, messages,
-            model=LLM_MODEL_QWEN_PRIMARY,
+            model=LLM_MODEL_DEEPSEEK_PRIMARY,
             temperature=0.4,
             max_tokens=4096,
             timeout=30.0,
@@ -799,7 +799,7 @@ class LocalQuickQAAgent(BaseAgent):
 
         result = await _call_llm_with_retry(
             self.llm, messages,
-            model=LLM_MODEL_QWEN_PRIMARY,
+            model=LLM_MODEL_DEEPSEEK_PRIMARY,
             temperature=0.3,
             max_tokens=2048,
             timeout=20.0,
