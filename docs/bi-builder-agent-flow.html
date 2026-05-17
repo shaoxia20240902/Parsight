@@ -1,0 +1,626 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BI 构建者智能体流程图</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --ink: #172033;
+      --muted: #62708a;
+      --line: #cfd7e6;
+      --blue: #2563eb;
+      --blue-soft: #e8f0ff;
+      --green: #16845b;
+      --green-soft: #e7f7ef;
+      --amber: #b66a00;
+      --amber-soft: #fff3dd;
+      --red: #c93636;
+      --red-soft: #ffecec;
+      --violet: #6d3edb;
+      --violet-soft: #f0ebff;
+      --shadow: 0 12px 30px rgba(23, 32, 51, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Microsoft YaHei", sans-serif;
+      line-height: 1.5;
+    }
+
+    .page {
+      max-width: 1480px;
+      margin: 0 auto;
+      padding: 32px 28px 48px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 24px;
+      align-items: end;
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      max-width: 860px;
+      font-size: 15px;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+      max-width: 520px;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .dot.blue { background: var(--blue); }
+    .dot.green { background: var(--green); }
+    .dot.amber { background: var(--amber); }
+    .dot.violet { background: var(--violet); }
+    .dot.red { background: var(--red); }
+
+    .flow {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(210px, 1fr));
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .stage {
+      position: relative;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: var(--shadow);
+      min-height: 156px;
+    }
+
+    .stage::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -15px;
+      width: 12px;
+      height: 12px;
+      border-top: 2px solid #8491a8;
+      border-right: 2px solid #8491a8;
+      transform: translateY(-50%) rotate(45deg);
+      background: transparent;
+      z-index: 2;
+    }
+
+    .stage:nth-child(5)::after,
+    .stage:nth-child(10)::after,
+    .stage:nth-child(15)::after,
+    .stage:last-child::after {
+      display: none;
+    }
+
+    .stage h2 {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 10px;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+
+    .badge {
+      flex: 0 0 auto;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .stage p {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .stage ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 6px;
+    }
+
+    .stage li {
+      color: #35425a;
+      font-size: 13px;
+      padding-left: 14px;
+      position: relative;
+    }
+
+    .stage li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 8px;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: currentColor;
+      opacity: 0.45;
+    }
+
+    .blue {
+      border-color: #aac1ff;
+      background: linear-gradient(180deg, #ffffff 0%, var(--blue-soft) 100%);
+    }
+
+    .blue .badge {
+      color: #ffffff;
+      background: var(--blue);
+    }
+
+    .green {
+      border-color: #9ddcbc;
+      background: linear-gradient(180deg, #ffffff 0%, var(--green-soft) 100%);
+    }
+
+    .green .badge {
+      color: #ffffff;
+      background: var(--green);
+    }
+
+    .amber {
+      border-color: #ffd18a;
+      background: linear-gradient(180deg, #ffffff 0%, var(--amber-soft) 100%);
+    }
+
+    .amber .badge {
+      color: #ffffff;
+      background: var(--amber);
+    }
+
+    .violet {
+      border-color: #cab7ff;
+      background: linear-gradient(180deg, #ffffff 0%, var(--violet-soft) 100%);
+    }
+
+    .violet .badge {
+      color: #ffffff;
+      background: var(--violet);
+    }
+
+    .red {
+      border-color: #ffb5b5;
+      background: linear-gradient(180deg, #ffffff 0%, var(--red-soft) 100%);
+    }
+
+    .red .badge {
+      color: #ffffff;
+      background: var(--red);
+    }
+
+    .decision {
+      border-style: dashed;
+    }
+
+    .wide-note {
+      margin-top: 24px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+    }
+
+    .note {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .note h3 {
+      margin: 0 0 10px;
+      font-size: 16px;
+    }
+
+    .note p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .mini-flow {
+      margin-top: 24px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .mini-flow h3 {
+      margin: 0 0 16px;
+      font-size: 18px;
+    }
+
+    .lanes {
+      display: grid;
+      gap: 12px;
+    }
+
+    .lane {
+      display: grid;
+      grid-template-columns: 150px 1fr;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .lane-title {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .chip {
+      padding: 7px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #fbfcff;
+      font-size: 13px;
+      color: #35425a;
+    }
+
+    .arrow {
+      color: #8491a8;
+      font-weight: 700;
+    }
+
+    @media (max-width: 1180px) {
+      header {
+        grid-template-columns: 1fr;
+      }
+
+      .legend {
+        justify-content: flex-start;
+      }
+
+      .flow {
+        grid-template-columns: repeat(2, minmax(220px, 1fr));
+      }
+
+      .stage::after {
+        display: none;
+      }
+
+      .wide-note {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 680px) {
+      .page {
+        padding: 20px 14px 32px;
+      }
+
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .lane {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <div>
+        <h1>BI 构建者智能体流程图</h1>
+        <p class="subtitle">
+          这张图描述问答页中 BI 构建者从用户提问、意图判断、已有候选、ScopePlanning、业务知识与偏好确认、统一确认到最终生成并跳转 BI 页的完整流程。
+        </p>
+      </div>
+      <div class="legend" aria-label="图例">
+        <span><i class="dot blue"></i>意图与上下文</span>
+        <span><i class="dot green"></i>复用已有看板</span>
+        <span><i class="dot amber"></i>用户交互补全</span>
+        <span><i class="dot violet"></i>生成与写入</span>
+        <span><i class="dot red"></i>阻塞或失败</span>
+      </div>
+    </header>
+
+    <section class="flow" aria-label="主流程">
+      <article class="stage blue">
+        <h2><span class="badge">1</span>用户提问</h2>
+        <p>用户在聊天页选择“构建者”模式，并输入自然语言需求。</p>
+        <ul>
+          <li>支持推荐问题点击</li>
+          <li>支持补充输入再次进入流程</li>
+        </ul>
+      </article>
+
+      <article class="stage blue decision">
+        <h2><span class="badge">2</span>意图判断</h2>
+        <p>判断是否属于 BI 查看、创建、调整、补充或数据探索。</p>
+        <ul>
+          <li>非 BI：返回默认能力说明</li>
+          <li>识别 force_create 和 explore_dataset</li>
+        </ul>
+      </article>
+
+      <article class="stage blue">
+        <h2><span class="badge">3</span>加载上下文</h2>
+        <p>读取表理解、字段画像、BI 分类、现有图表、筛选器。</p>
+        <ul>
+          <li>检查文件和六维理解状态</li>
+          <li>整理可选字段和分类</li>
+        </ul>
+      </article>
+
+      <article class="stage blue decision">
+        <h2><span class="badge">4</span>可用性门禁</h2>
+        <p>如果数据或理解未就绪，不能继续创建。</p>
+        <ul>
+          <li>提示原因</li>
+          <li>给出去数据页查看进度按钮</li>
+        </ul>
+      </article>
+
+      <article class="stage green decision">
+        <h2><span class="badge">5</span>是否跳过复用</h2>
+        <p>用户明确新建时直接进入 ScopePlanning，否则才查已有图表候选。</p>
+        <ul>
+          <li>必须新建：跳过匹配</li>
+          <li>数据探索：主动推荐方向</li>
+        </ul>
+      </article>
+
+      <article class="stage green">
+        <h2><span class="badge">6</span>匹配已有候选</h2>
+        <p>按指标、维度、意图、筛选、分类语义评分，只产出候选。</p>
+        <ul>
+          <li>不替用户直接决定</li>
+          <li>最多返回 3 张候选图</li>
+        </ul>
+      </article>
+
+      <article class="stage green decision">
+        <h2><span class="badge">7</span>候选动作</h2>
+        <p>找到已有图表时给用户三个清晰动作。</p>
+        <ul>
+          <li>去查看</li>
+          <li>基于此图调整 / 我要新建</li>
+        </ul>
+      </article>
+
+      <article class="stage amber">
+        <h2><span class="badge">8</span>ScopePlanning</h2>
+        <p>一次性完成需求探索、搭配推荐、批量范围和缺失信息判断。</p>
+        <ul>
+          <li>输出 readiness</li>
+          <li>输出 chart_list</li>
+        </ul>
+      </article>
+
+      <article class="stage amber decision">
+        <h2><span class="badge">9</span>知识/偏好候选</h2>
+        <p>需求探索清楚后，再识别业务知识和用户偏好。</p>
+        <ul>
+          <li>神马 = 神州数码</li>
+          <li>排名默认用条形图</li>
+        </ul>
+      </article>
+
+      <article class="stage amber">
+        <h2><span class="badge">10</span>确认卡片</h2>
+        <p>用户确认后才写入业务词典、表理解或用户偏好。</p>
+        <ul>
+          <li>确认添加 / 本次使用</li>
+          <li>不保存 / 我来改</li>
+        </ul>
+      </article>
+
+      <article class="stage amber">
+        <h2><span class="badge">11</span>必填问卷</h2>
+        <p>只展示继续生成必需的问题，减少用户负担。</p>
+        <ul>
+          <li>通常 1-2 个问题</li>
+          <li>确认并继续</li>
+        </ul>
+      </article>
+
+      <article class="stage amber decision">
+        <h2><span class="badge">12</span>高级设置</h2>
+        <p>可选项折叠展示，不阻塞主流程。</p>
+        <ul>
+          <li>排序、Top N、颜色等</li>
+          <li>默认可跳过</li>
+        </ul>
+      </article>
+
+      <article class="stage amber">
+        <h2><span class="badge">13</span>图表列表</h2>
+        <p>单图和多图统一用 chart_list，搭配建议可增删。</p>
+        <ul>
+          <li>单图 = 列表长度 1</li>
+          <li>Top 5 可加入 Bottom 5</li>
+        </ul>
+      </article>
+
+      <article class="stage amber">
+        <h2><span class="badge">14</span>统一确认摘要</h2>
+        <p>字段、筛选、图表类型、推荐分类和写入策略一次确认。</p>
+        <ul>
+          <li>多图用 Markdown 表格</li>
+          <li>表格图也用 Markdown</li>
+        </ul>
+      </article>
+
+      <article class="stage amber decision">
+        <h2><span class="badge">15</span>分类调整</h2>
+        <p>分类依赖最终字段和跨表关系，在摘要中一起调整。</p>
+        <ul>
+          <li>不同意可重新选择</li>
+          <li>分类少于 8 个可新建</li>
+        </ul>
+      </article>
+
+      <article class="stage amber">
+        <h2><span class="badge">16</span>影响范围确认</h2>
+        <p>整分类重做或替换已有图表时，必须二次确认影响范围。</p>
+        <ul>
+          <li>显示将替换哪些图</li>
+          <li>保留回滚快照</li>
+        </ul>
+      </article>
+
+      <article class="stage violet decision">
+        <h2><span class="badge">17</span>最终确认</h2>
+        <p>用户点击“确认生成”后才进入真实创建。</p>
+        <ul>
+          <li>可返回修改 chart_list</li>
+          <li>可返回修改字段/分类</li>
+        </ul>
+      </article>
+
+      <article class="stage violet">
+        <h2><span class="badge">18</span>生成配置</h2>
+        <p>复用 BI SQL builder、图表配置模型和筛选器规则。</p>
+        <ul>
+          <li>生成 SQL</li>
+          <li>生成图表 config</li>
+        </ul>
+      </article>
+
+      <article class="stage violet decision">
+        <h2><span class="badge">19</span>预览校验</h2>
+        <p>执行 SQL 预览，确保图表数据不是编造结果。</p>
+        <ul>
+          <li>成功：写入配置</li>
+          <li>失败：返回修正选项</li>
+        </ul>
+      </article>
+
+      <article class="stage violet">
+        <h2><span class="badge">20</span>写入并展示</h2>
+        <p>新图表或批量图表进入目标分类和图表仓库，聊天中返回预览。</p>
+        <ul>
+          <li>按钮：去查看</li>
+          <li>定位到 BI 页面图表</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="wide-note" aria-label="关键原则">
+      <article class="note">
+        <h3>候选不是决定</h3>
+        <p>已有图表只能作为候选返回，用户可以去查看、基于此图调整，或选择完全新建。</p>
+      </article>
+      <article class="note">
+        <h3>交互优先选项化</h3>
+        <p>指标、维度、筛选、分类、图表类型都优先从当前数据上下文里生成选项，保留“其他”作为兜底。</p>
+      </article>
+      <article class="note">
+        <h3>创建前必须确认</h3>
+        <p>最终生成前要一起确认字段、指标口径、筛选条件、推荐分类和写入策略。表格类必须用 Markdown 表格呈现。</p>
+      </article>
+      <article class="note">
+        <h3>ScopePlanning 一次完成</h3>
+        <p>需求探索、搭配推荐、批量范围、缺失信息和推荐分类在一次规划里完成，减少反复调用和前后推翻。</p>
+      </article>
+      <article class="note">
+        <h3>知识和偏好后置</h3>
+        <p>业务知识和用户偏好在需求探索清楚后确认，避免在明确新建且无模糊词时浪费调用。</p>
+      </article>
+      <article class="note">
+        <h3>支持批量和重做</h3>
+        <p>支持一次创建多张图，也支持重做整个分类下的 BI；影响已有图表时必须展示范围并二次确认。</p>
+      </article>
+    </section>
+
+    <section class="mini-flow" aria-label="前后端职责">
+      <h3>前后端职责链路</h3>
+      <div class="lanes">
+        <div class="lane">
+          <div class="lane-title">前端聊天页</div>
+          <div class="chips">
+            <span class="chip">发送消息</span><span class="arrow">→</span>
+            <span class="chip">渲染富消息</span><span class="arrow">→</span>
+            <span class="chip">按钮/问卷提交</span><span class="arrow">→</span>
+            <span class="chip">图表预览</span>
+          </div>
+        </div>
+        <div class="lane">
+          <div class="lane-title">构建者接口</div>
+          <div class="chips">
+            <span class="chip">状态机</span><span class="arrow">→</span>
+            <span class="chip">意图判断</span><span class="arrow">→</span>
+            <span class="chip">已有图表匹配</span><span class="arrow">→</span>
+            <span class="chip">ScopePlanning</span><span class="arrow">→</span>
+            <span class="chip">知识/偏好确认</span><span class="arrow">→</span>
+            <span class="chip">统一确认</span>
+          </div>
+        </div>
+        <div class="lane">
+          <div class="lane-title">BI 服务层</div>
+          <div class="chips">
+            <span class="chip">字段画像</span><span class="arrow">→</span>
+            <span class="chip">SQL 编译</span><span class="arrow">→</span>
+            <span class="chip">预览校验</span><span class="arrow">→</span>
+            <span class="chip">写入 BI 配置</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
