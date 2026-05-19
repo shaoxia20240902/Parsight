@@ -16,6 +16,8 @@ from app.models.file_record import FileRecord
 from app.models.sheet_meta import SheetMeta
 from app.models.chat_history import ChatHistory
 from app.routers.auth import get_current_admin_user
+from app.services.llm_config_service import LLMConfigService
+from app.services.llm_client import set_llm_config
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -296,7 +298,7 @@ async def _delete_space_data(db: AsyncSession, space_id: str) -> None:
         for meta in metas_result.scalars().all():
             if meta.table_name:
                 await db.execute(
-                    text(f'DROP TABLE IF EXISTS "{meta.table_name}"')
+                    text(f"DROP TABLE IF EXISTS `{meta.table_name}`")
                 )
         await db.execute(delete(SheetMeta).where(SheetMeta.file_id == file_rec.id))
 
@@ -330,3 +332,304 @@ async def delete_user(
     await db.commit()
 
     return {"code": 200, "message": f"用户「{target.username}」已删除"}
+
+
+# ========== LLM 配置管理 ==========
+
+class LLMConfigCreateRequest(BaseModel):
+    name: str
+    api_base: str
+    api_key: str
+    primary_model: str
+    alt_model: str = ""
+    is_active: bool = False
+
+
+class LLMConfigUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    api_base: Optional[str] = None
+    api_key: Optional[str] = None
+    primary_model: Optional[str] = None
+    alt_model: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+@router.get("/llm-configs")
+async def list_llm_configs(
+    _admin: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取所有 LLM 配置列表"""
+    service = LLMConfigService(db)
+    configs = await service.list_configs()
+    return {"code": 200, "data": configs}
+
+
+@router.post("/llm-configs")
+async def create_llm_config(
+    req: LLMConfigCreateRequest,
+    _admin: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """创建 LLM 配置"""
+    service = LLMConfigService(db)
+    config = await service.create_config(
+        name=req.name,
+        api_base=req.api_base,
+        api_key=req.api_key,
+        primary_model=req.primary_model,
+        alt_model=req.alt_model or None,
+        is_active=req.is_active,
+    )
+    if req.is_active:
+        active = await service.get_active_config()
+        set_llm_config(active)
+    return {"code": 200, "data": config}
+
+
+@router.put("/llm-configs/{config_id}")
+async def update_llm_config(
+    config_id: str,
+    req: LLMConfigUpdateRequest,
+    _admin: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """更新 LLM 配置"""
+    service = LLMConfigService(db)
+    config = await service.update_config(
+        config_id,
+        name=req.name,
+        api_base=req.api_base,
+        api_key=req.api_key,
+        primary_model=req.primary_model,
+        alt_model=req.alt_model,
+        is_active=req.is_active,
+    )
+    if not config:
+        raise HTTPException(status_code=404, detail="配置不存在")
+    if req.is_active:
+        active = await service.get_active_config()
+        set_llm_config(active)
+    return {"code": 200, "data": config}
+
+
+@router.delete("/llm-configs/{config_id}")
+async def delete_llm_config(
+    config_id: str,
+    _admin: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """删除 LLM 配置"""
+    service = LLMConfigService(db)
+    ok = await service.delete_config(config_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="配置不存在")
+    # 检查当前活跃配置是否被删除
+    active = await service.get_active_config()
+    set_llm_config(active)
+    return {"code": 200, "message": "配置已删除"}
+
+
+@router.post("/llm-configs/{config_id}/activate")
+async def activate_llm_config(
+    config_id: str,
+    _admin: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """设为当前启用的 LLM 配置"""
+    service = LLMConfigService(db)
+    ok = await service.set_active(config_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="配置不存在")
+    active = await service.get_active_config()
+    set_llm_config(active)
+    return {"code": 200, "data": active}
+
+
+class LLMConfigTestRequest(BaseModel):
+    api_base: str
+    api_key: str
+    primary_model: str
+
+
+@router.post("/llm-configs/test")
+async def test_llm_config(
+    req: LLMConfigTestRequest,
+    _admin: User = Depends(get_current_admin_user),
+):
+    """测试 LLM 配置连通性"""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30)) as client:
+            response = await client.post(
+                f"{req.api_base.rstrip('/')}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {req.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": req.primary_model,
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "max_tokens": 5,
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+            return {
+                "code": 200,
+                "data": {
+                    "success": True,
+                    "model": data.get("model", req.primary_model),
+                },
+            }
+    except Exception as e:
+        return {
+            "code": 200,
+            "data": {
+                "success": False,
+                "error": str(e),
+            },
+        }
+
+
+# ========== 空间管理 ==========
+
+class CreateSpaceRequest(BaseModel):
+    name: str
+    owner_id: str
+    code: Optional[str] = None
+    description: Optional[str] = None
+
+
+class UpdateSpaceRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+@router.get("/spaces")
+async def list_spaces(
+    _admin: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取所有空间列表"""
+    result = await db.execute(
+        select(Space, User.username)
+        .join(User, Space.owner_id == User.id)
+        .order_by(Space.created_at.desc())
+    )
+    rows = result.all()
+    return {
+        "code": 200,
+        "data": [
+            {
+                "id": space.id,
+                "name": space.name,
+                "code": space.code,
+                "description": space.description or "",
+                "owner_id": space.owner_id,
+                "owner_name": username,
+                "is_active": space.is_active,
+                "created_at": space.created_at.isoformat() if space.created_at else "",
+            }
+            for space, username in rows
+        ]
+    }
+
+
+@router.post("/spaces")
+async def create_space(
+    req: CreateSpaceRequest,
+    _admin: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """创建空间（管理员可指定任意用户为拥有者）"""
+    # 检查用户是否存在
+    user_result = await db.execute(select(User).where(User.id == req.owner_id))
+    if not user_result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="指定的用户不存在")
+
+    # 生成唯一 code
+    code = req.code or f"space_{req.owner_id[:8]}_{uuid.uuid4().hex[:6]}"
+    code_result = await db.execute(select(Space).where(Space.code == code))
+    if code_result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="空间代码已存在")
+
+    space = Space(
+        id=str(uuid.uuid4()),
+        name=req.name,
+        code=code,
+        description=req.description or "",
+        owner_id=req.owner_id,
+        is_active=True,
+    )
+    db.add(space)
+    await db.commit()
+    await db.refresh(space)
+    return {
+        "code": 200,
+        "data": {
+            "id": space.id,
+            "name": space.name,
+            "code": space.code,
+            "owner_id": space.owner_id,
+        }
+    }
+
+
+@router.put("/spaces/{space_id}")
+async def update_space(
+    space_id: str,
+    req: UpdateSpaceRequest,
+    _admin: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """编辑空间名称和描述"""
+    result = await db.execute(select(Space).where(Space.id == space_id))
+    space = result.scalar_one_or_none()
+    if not space:
+        raise HTTPException(status_code=404, detail="空间不存在")
+
+    if req.name is not None:
+        space.name = req.name
+    if req.description is not None:
+        space.description = req.description
+
+    await db.commit()
+    await db.refresh(space)
+    return {
+        "code": 200,
+        "data": {
+            "id": space.id,
+            "name": space.name,
+            "description": space.description,
+        }
+    }
+
+
+@router.delete("/spaces/{space_id}")
+async def delete_space(
+    space_id: str,
+    _admin: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """删除空间及其全部数据（级联删除）"""
+    result = await db.execute(select(Space).where(Space.id == space_id))
+    space = result.scalar_one_or_none()
+    if not space:
+        raise HTTPException(status_code=404, detail="空间不存在")
+
+    # 不能删除自己当前正在使用的空间
+    active_result = await db.execute(
+        select(Space).where(
+            Space.owner_id == _admin.id,
+            Space.id == space_id,
+            Space.is_active == True
+        )
+    )
+    if active_result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="不能删除当前正在使用的空间")
+
+    await _delete_space_data(db, space_id)
+    await db.delete(space)
+    await db.commit()
+    return {"code": 200, "message": f"空间「{space.name}」已删除"}

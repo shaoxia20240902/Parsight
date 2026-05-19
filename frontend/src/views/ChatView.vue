@@ -312,6 +312,16 @@
                 </div>
               </div>
             </div>
+            <!-- 统一思考状态（非 builder 模式专属） -->
+            <div v-if="sending && !messages.some(m => m.pending)" key="thinking" class="message assistant">
+              <div class="message-avatar">析</div>
+              <div class="message-bubble">
+                <div class="message-content message-content--thinking">
+                  <span class="thinking-pulse" aria-hidden="true" />
+                  <span class="thinking-text">{{ thinkingTexts[thinkingIndex] }}</span>
+                </div>
+              </div>
+            </div>
           </TransitionGroup>
         </div>
 
@@ -429,12 +439,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Promotion } from '@element-plus/icons-vue'
 import { CHAT_MODES, getChatMode, type ChatModeId } from '../constants/chatModes'
-import { biBuilderChat, deepResearchUrl, quickQA } from '../api'
+import { biBuilderChat, deepResearchUrl, quickQA, getChatRecommendations } from '../api'
 import { getChatHistory, listFiles } from '../api/space'
 import {
   INSIGHT_PROMPT_GROUPS,
@@ -443,9 +453,10 @@ import {
 } from '../mocks/chatPromptsMock'
 
 const chatModes = CHAT_MODES
-const insightGroups = INSIGHT_PROMPT_GROUPS
-const deepPrompts = DEEP_PROMPT_QUESTIONS
-const builderPrompts = BUILDER_PROMPT_QUESTIONS
+const insightGroups = ref<typeof INSIGHT_PROMPT_GROUPS>(INSIGHT_PROMPT_GROUPS)
+const deepPrompts = ref<string[]>(DEEP_PROMPT_QUESTIONS)
+const builderPrompts = ref<string[]>(BUILDER_PROMPT_QUESTIONS)
+const recommendationsLoaded = ref(false)
 const router = useRouter()
 const SPACE_KEY = 'xlsx-bi-active-space'
 
@@ -468,6 +479,18 @@ const sessions = ref<ChatSessionItem[]>([])
 const chatRef = ref<HTMLElement>()
 const composerText = ref('')
 const sending = ref(false)
+const thinkingIndex = ref(0)
+let thinkingTimer: ReturnType<typeof setInterval> | null = null
+
+const thinkingTexts = [
+  '正在分析数据结构…',
+  '正在读取表字段信息…',
+  '正在查找相关记录…',
+  '正在聚合计算…',
+  '正在整理分析结果…',
+  '正在生成可视化建议…',
+]
+
 const builderSessionId = ref<string | null>(null)
 const formValues = ref<Record<string, any>>({})
 const lastBuilderChartList = ref<any[]>([])
@@ -532,6 +555,34 @@ async function latestFileId() {
   return latest?.id || ''
 }
 
+async function loadRecommendations() {
+  if (recommendationsLoaded.value) return
+  const fileId = await latestFileId()
+  if (!fileId) return
+  try {
+    const res = await getChatRecommendations(fileId)
+    const data = res.data.data
+    if (data?.status === 'completed' && data.questions) {
+      const q = data.questions
+      if (q.insight_groups?.length) {
+        insightGroups.value = q.insight_groups.map((g: any) => ({
+          title: g.title,
+          questions: g.questions.slice(0, 3) as [string, string, string],
+        }))
+      }
+      if (q.deep_questions?.length) {
+        deepPrompts.value = q.deep_questions.slice(0, 3)
+      }
+      if (q.builder_questions?.length) {
+        builderPrompts.value = q.builder_questions.slice(0, 3)
+      }
+      recommendationsLoaded.value = true
+    }
+  } catch (e) {
+    console.error('加载推荐问题失败', e)
+  }
+}
+
 async function sendBuilderMessage(text: string, event?: any) {
   const fileId = await latestFileId()
   if (!fileId) {
@@ -545,6 +596,7 @@ async function sendBuilderMessage(text: string, event?: any) {
   const assistantMsg: ChatMessage = { role: 'assistant', content: builderLoadingText(eventType), blocks: [], pending: true }
   messages.value.push(assistantMsg)
   sending.value = true
+  startThinkingCycle()
   await nextTick()
   scrollToBottom()
   try {
@@ -572,6 +624,7 @@ async function sendBuilderMessage(text: string, event?: any) {
     assistantMsg.pending = false
   } finally {
     sending.value = false
+    stopThinkingCycle()
     await nextTick()
     scrollToBottom()
   }
@@ -597,6 +650,7 @@ async function sendInsightMessage(text: string) {
   }
   messages.value.push({ role: 'user', content: text })
   sending.value = true
+  startThinkingCycle()
   await nextTick()
   scrollToBottom()
   try {
@@ -630,6 +684,7 @@ async function sendInsightMessage(text: string) {
     messages.value.push({ role: 'assistant', content: e.response?.data?.detail || e.message || '洞察处理失败' })
   } finally {
     sending.value = false
+    stopThinkingCycle()
     await nextTick()
     scrollToBottom()
   }
@@ -648,6 +703,7 @@ async function sendDeepMessage(text: string) {
   const assistantMsg: ChatMessage = { role: 'assistant', content: '开始深度洞察…' }
   messages.value.push(assistantMsg)
   sending.value = true
+  startThinkingCycle()
   await nextTick()
   scrollToBottom()
 
@@ -700,6 +756,7 @@ async function sendDeepMessage(text: string) {
     assistantMsg.content = e.message || '深度洞察处理失败'
   } finally {
     sending.value = false
+    stopThinkingCycle()
     await nextTick()
     scrollToBottom()
   }
@@ -762,11 +819,26 @@ async function submitQuestionnaire(block: any) {
 }
 
 function builderLoadingText(eventType: string) {
-  if (eventType === 'confirm_generate' || eventType === 'create_companion_chart') return '正在创建报表…'
-  if (eventType === 'confirm_knowledge') return '正在保存业务知识并继续…'
-  if (eventType === 'update_chart_list') return '正在更新报表方案…'
+  if (eventType === 'confirm_generate' || eventType === 'create_companion_chart') return '正在创建分析图表…'
+  if (eventType === 'confirm_knowledge') return '正在保存数据知识并继续…'
+  if (eventType === 'update_chart_list') return '正在更新分析方案…'
   if (eventType === 'confirm_complete') return '正在整理本轮上下文…'
-  return '正在理解你的销售报表需求…'
+  return '正在处理你的分析需求…'
+}
+
+function startThinkingCycle() {
+  stopThinkingCycle()
+  thinkingIndex.value = 0
+  thinkingTimer = setInterval(() => {
+    thinkingIndex.value = (thinkingIndex.value + 1) % thinkingTexts.length
+  }, 3500)
+}
+
+function stopThinkingCycle() {
+  if (thinkingTimer) {
+    clearInterval(thinkingTimer)
+    thinkingTimer = null
+  }
 }
 
 function rememberBuilderEditorPayload(blocks: any[]) {
@@ -879,6 +951,9 @@ function switchMode(mode: ChatModeId) {
   if (mode !== 'builder') builderSessionId.value = null
   formValues.value = {}
 
+  // 尝试加载动态推荐问题
+  loadRecommendations()
+
   const config = getChatMode(mode)
   if (!config.switchTransition) {
     contentMode.value = mode
@@ -918,6 +993,11 @@ onMounted(() => {
     img.src = mode.avatar
   }
   loadHistory()
+  loadRecommendations()
+})
+
+onUnmounted(() => {
+  stopThinkingCycle()
 })
 </script>
 
@@ -1242,6 +1322,37 @@ onMounted(() => {
 @keyframes thinkingPulse {
   0%, 100% { opacity: 0.35; transform: translateY(0); }
   50% { opacity: 1; transform: translateY(-1px); }
+}
+
+.message-content--thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--chat-muted);
+  min-height: 22px;
+}
+
+.thinking-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--chat-accent);
+  box-shadow: 0 0 0 0 rgba(198, 97, 63, 0.45);
+  animation: pulse-ring 1.8s ease-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgba(198, 97, 63, 0.45); }
+  70% { box-shadow: 0 0 0 10px rgba(198, 97, 63, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(198, 97, 63, 0); }
+}
+
+.thinking-text {
+  font-size: 13px;
+  color: #8B7355;
+  font-weight: 400;
+  letter-spacing: 0.01em;
 }
 
 .sales-plan-list {

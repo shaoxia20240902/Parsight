@@ -15,6 +15,20 @@ from typing import Any, Dict, List, Optional
 import httpx
 from app.config import LLM_API_BASE, LLM_API_KEY, LLM_MODEL, LLM_MAX_TOKENS, LLM_TEMPERATURE
 
+# 全局动态配置（由管理端热更新）
+_dynamic_config: Optional[Dict[str, Any]] = None
+
+
+def set_llm_config(config: Optional[Dict[str, Any]]) -> None:
+    """设置全局 LLM 动态配置（管理端调用）"""
+    global _dynamic_config
+    _dynamic_config = config
+
+
+def get_llm_config() -> Optional[Dict[str, Any]]:
+    """获取当前全局 LLM 动态配置"""
+    return _dynamic_config
+
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
@@ -124,15 +138,25 @@ class LLMClient:
     """OpenAI 兼容的 LLM 客户端"""
 
     def __init__(self):
-        self.api_base = LLM_API_BASE.rstrip("/")
-        self.api_key = LLM_API_KEY
-        self.model = LLM_MODEL
+        # 优先使用动态配置
+        dyn = get_llm_config()
+        self.api_base = (dyn.get("api_base") if dyn else LLM_API_BASE).rstrip("/")
+        self.api_key = dyn.get("api_key") if dyn else LLM_API_KEY
+        self.model = dyn.get("primary_model") if dyn else LLM_MODEL
         self.max_tokens = LLM_MAX_TOKENS
         self.temperature = LLM_TEMPERATURE
+        self._client: Optional[httpx.AsyncClient] = None
 
     def _require_api_key(self) -> None:
         if not self.api_key:
             raise RuntimeError("LLM_API_KEY 未配置，无法调用大模型")
+
+    def _http_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            )
+        return self._client
 
     async def chat_completion(
         self,
@@ -174,24 +198,24 @@ class LLMClient:
             "Content-Type": "application/json",
         }
 
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
-            try:
-                response = await client.post(url, json=payload, headers=headers)
-                response.raise_for_status()
-                data = response.json()
-                content = data["choices"][0]["message"]["content"]
-                _log_ai_call("chat_completion", model, messages, temp_val, tokens_val, content)
-                return content
-            except httpx.HTTPStatusError as e:
-                _log_ai_call("chat_completion", model, messages, temp_val, tokens_val, None,
-                             error=f"HTTP {e.response.status_code}: {e.response.text[:500]}")
-                logger.error(f"LLM API HTTP error: {e.response.status_code} - {e.response.text}")
-                raise RuntimeError(f"LLM API 调用失败: HTTP {e.response.status_code}")
-            except httpx.RequestError as e:
-                _log_ai_call("chat_completion", model, messages, temp_val, tokens_val, None,
-                             error=f"网络错误: {e}")
-                logger.error(f"LLM API 网络错误: {e}")
-                raise RuntimeError(f"LLM API 网络错误: {e}")
+        client = self._http_client()
+        try:
+            response = await client.post(url, json=payload, headers=headers, timeout=httpx.Timeout(timeout))
+            response.raise_for_status()
+            data = response.json()
+            content = data["choices"][0]["message"]["content"]
+            _log_ai_call("chat_completion", model, messages, temp_val, tokens_val, content)
+            return content
+        except httpx.HTTPStatusError as e:
+            _log_ai_call("chat_completion", model, messages, temp_val, tokens_val, None,
+                         error=f"HTTP {e.response.status_code}: {e.response.text[:500]}")
+            logger.error(f"LLM API HTTP error: {e.response.status_code} - {e.response.text}")
+            raise RuntimeError(f"LLM API 调用失败: HTTP {e.response.status_code}")
+        except httpx.RequestError as e:
+            _log_ai_call("chat_completion", model, messages, temp_val, tokens_val, None,
+                         error=f"网络错误: {e}")
+            logger.error(f"LLM API 网络错误: {e}")
+            raise RuntimeError(f"LLM API 网络错误: {e}")
 
     async def chat_completion_json(
         self,
@@ -228,36 +252,36 @@ class LLMClient:
             "Content-Type": "application/json",
         }
 
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
-            data = None
-            try:
-                response = await client.post(url, json=payload, headers=headers)
-                response.raise_for_status()
-                data = response.json()
+        client = self._http_client()
+        data = None
+        try:
+            response = await client.post(url, json=payload, headers=headers, timeout=httpx.Timeout(timeout))
+            response.raise_for_status()
+            data = response.json()
+            content = data["choices"][0]["message"]["content"]
+            result = json.loads(content)
+            _log_ai_call("chat_completion_json", model, json_messages, temp_val, tokens_val, result)
+            return result
+        except json.JSONDecodeError:
+            if data:
                 content = data["choices"][0]["message"]["content"]
-                result = json.loads(content)
-                _log_ai_call("chat_completion_json", model, json_messages, temp_val, tokens_val, result)
-                return result
-            except json.JSONDecodeError:
-                if data:
-                    content = data["choices"][0]["message"]["content"]
-                    extracted = self._extract_json(content)
-                    _log_ai_call("chat_completion_json", model, json_messages, temp_val, tokens_val, extracted,
-                                 error=f"原始返回非JSON，已提取。原始内容前200字: {content[:200]}")
-                    return extracted
-                _log_ai_call("chat_completion_json", model, json_messages, temp_val, tokens_val, None,
-                             error="LLM 返回内容无法解析（data is None）")
-                raise RuntimeError("LLM 返回内容无法解析")
-            except httpx.HTTPStatusError as e:
-                _log_ai_call("chat_completion_json", model, json_messages, temp_val, tokens_val, None,
-                             error=f"HTTP {e.response.status_code}: {e.response.text[:500]}")
-                logger.error(f"LLM API HTTP error: {e.response.status_code} - {e.response.text[:500]}")
-                raise RuntimeError(f"LLM API JSON 调用失败: HTTP {e.response.status_code}")
-            except httpx.RequestError as e:
-                _log_ai_call("chat_completion_json", model, json_messages, temp_val, tokens_val, None,
-                             error=f"网络错误: {e}")
-                logger.error(f"LLM API 网络错误: {e}")
-                raise RuntimeError(f"LLM API 网络错误: {e}")
+                extracted = self._extract_json(content)
+                _log_ai_call("chat_completion_json", model, json_messages, temp_val, tokens_val, extracted,
+                             error=f"原始返回非JSON，已提取。原始内容前200字: {content[:200]}")
+                return extracted
+            _log_ai_call("chat_completion_json", model, json_messages, temp_val, tokens_val, None,
+                         error="LLM 返回内容无法解析（data is None）")
+            raise RuntimeError("LLM 返回内容无法解析")
+        except httpx.HTTPStatusError as e:
+            _log_ai_call("chat_completion_json", model, json_messages, temp_val, tokens_val, None,
+                         error=f"HTTP {e.response.status_code}: {e.response.text[:500]}")
+            logger.error(f"LLM API HTTP error: {e.response.status_code} - {e.response.text[:500]}")
+            raise RuntimeError(f"LLM API JSON 调用失败: HTTP {e.response.status_code}")
+        except httpx.RequestError as e:
+            _log_ai_call("chat_completion_json", model, json_messages, temp_val, tokens_val, None,
+                         error=f"网络错误: {e}")
+            logger.error(f"LLM API 网络错误: {e}")
+            raise RuntimeError(f"LLM API 网络错误: {e}")
 
     def _ensure_json_instruction(self, messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
         """Some OpenAI-compatible APIs require the literal word 'json' when response_format=json_object."""

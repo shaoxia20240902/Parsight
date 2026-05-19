@@ -46,6 +46,16 @@ const router = createRouter({
           path: 'admin/logs',
           name: 'AdminLogs',
           component: () => import('../views/AdminLogsView.vue')
+        },
+        {
+          path: 'admin/llm-config',
+          name: 'AdminLLMConfig',
+          component: () => import('../views/AdminLLMConfigView.vue')
+        },
+        {
+          path: 'admin/spaces',
+          name: 'AdminSpaces',
+          component: () => import('../views/AdminSpacesView.vue')
         }
       ]
     }

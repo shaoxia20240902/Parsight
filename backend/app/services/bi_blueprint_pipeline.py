@@ -11,10 +11,12 @@ from app.agents.bi_pipeline_agents import (
     BIScenarioQuestionAgent,
     BISheetRolePickerAgent,
     BIQuestionReviewAgent,
+    BIQuestionAggregatorAgent,
 )
 from app.services.bi_context import sheet_payload_for_llm
 from app.services.bi_pipeline_logger import (
     BIPipelineRunContext,
+    STEP_AGGREGATE,
     STEP_BLUEPRINT_COMPLETE,
     STEP_BLUEPRINT_FAILED,
     STEP_QUESTIONS,
@@ -32,11 +34,14 @@ logger = logging.getLogger(__name__)
 class BIBlueprintPipeline:
     """多步蓝图流水线，最终结构与单步蓝图兼容。"""
 
+    MAX_SELECTED_QUESTIONS = 8
+
     def __init__(self, concurrency: int = 3):
         self.role_agent = BISheetRolePickerAgent()
         self.scenario_agent = BIScenarioAgent()
         self.question_agent = BIScenarioQuestionAgent()
         self.review_agent = BIQuestionReviewAgent()
+        self.aggregate_agent = BIQuestionAggregatorAgent()
         self.sem = asyncio.Semaphore(concurrency)
 
     async def run(
@@ -193,46 +198,50 @@ class BIBlueprintPipeline:
         if question_tasks:
             await asyncio.gather(*question_tasks)
 
-        # Step 4: 每角色审视补题
-        for perspective in perspectives:
+        # Step 4: 每角色审视补题（并行）
+        async def review_perspective(perspective: Dict[str, Any]) -> None:
             pid = perspective.get("perspective_id")
             rname = perspective.get("role_name")
             review_payload = {
                 "sheet_payload": sheet_payload,
                 "perspective": perspective,
             }
-            try:
-                review = await self.review_agent.run({"perspective_payload": review_payload})
-                added = len(review.get("additional_questions") or [])
-                self._merge_review_questions(perspective, review)
-                warnings.extend(review.get("gaps") or [])
-                log_step_ok(
-                    STEP_REVIEW,
-                    f"审视完成，need_more={review.get('need_more_questions')}，补题 {added} 道",
-                    run_ctx=run_ctx,
-                    table_name=table_name,
-                    sheet_name=sheet_name,
-                    perspective_id=pid,
-                    role_name=rname,
-                    extra={
-                        "coverage_ok": review.get("coverage_ok"),
-                        "gaps": review.get("gaps"),
-                    },
-                )
-            except Exception as e:
-                logger.warning("审视失败 %s: %s", pid, e)
-                msg = f"角色 {rname} 审视失败: {e}"
-                warnings.append(msg)
-                log_step_warn(
-                    STEP_REVIEW,
-                    msg,
-                    run_ctx=run_ctx,
-                    table_name=table_name,
-                    sheet_name=sheet_name,
-                    perspective_id=pid,
-                    role_name=rname,
-                    exc=e,
-                )
+            async with self.sem:
+                try:
+                    review = await self.review_agent.run({"perspective_payload": review_payload})
+                    added = len(review.get("additional_questions") or [])
+                    self._merge_review_questions(perspective, review)
+                    warnings.extend(review.get("gaps") or [])
+                    log_step_ok(
+                        STEP_REVIEW,
+                        f"审视完成，need_more={review.get('need_more_questions')}，补题 {added} 道",
+                        run_ctx=run_ctx,
+                        table_name=table_name,
+                        sheet_name=sheet_name,
+                        perspective_id=pid,
+                        role_name=rname,
+                        extra={
+                            "coverage_ok": review.get("coverage_ok"),
+                            "gaps": review.get("gaps"),
+                        },
+                    )
+                except Exception as e:
+                    logger.warning("审视失败 %s: %s", pid, e)
+                    msg = f"角色 {rname} 审视失败: {e}"
+                    warnings.append(msg)
+                    log_step_warn(
+                        STEP_REVIEW,
+                        msg,
+                        run_ctx=run_ctx,
+                        table_name=table_name,
+                        sheet_name=sheet_name,
+                        perspective_id=pid,
+                        role_name=rname,
+                        exc=e,
+                    )
+
+        if perspectives:
+            await asyncio.gather(*[review_perspective(p) for p in perspectives])
 
         # 移除无问题的空场景
         for perspective in perspectives:
@@ -254,6 +263,90 @@ class BIBlueprintPipeline:
             )
             raise ValueError("蓝图流水线未生成任何有效场景与问题")
 
+        # Step 5: 汇总筛选（Aggregator）— 将所有问题汇总后精选 6～8 个
+        all_questions = []
+        for perspective in perspectives:
+            for scenario in perspective.get("scenarios", []):
+                for q in scenario.get("questions", []):
+                    all_questions.append({
+                        **q,
+                        "perspective_id": perspective.get("perspective_id"),
+                        "scenario_id": scenario.get("scenario_id"),
+                        "role_name": perspective.get("role_name"),
+                        "scenario_name": scenario.get("scenario_name"),
+                    })
+
+        if len(all_questions) > self.MAX_SELECTED_QUESTIONS:
+            selected = []
+            try:
+                agg_result = await self.aggregate_agent.run({
+                    "sheet_payload": sheet_payload,
+                    "all_questions": all_questions,
+                })
+                selected = agg_result.get("selected_questions") or []
+                if selected:
+                    if len(selected) > self.MAX_SELECTED_QUESTIONS:
+                        selected = self._deterministic_select_questions(selected)
+                    self._apply_selected_questions(perspectives, selected)
+                    retained_count = self._count_questions(perspectives)
+                    if retained_count == 0:
+                        selected = self._deterministic_select_questions(all_questions)
+                        self._apply_selected_questions(perspectives, selected)
+                        retained_count = self._count_questions(perspectives)
+                    log_step_ok(
+                        STEP_AGGREGATE,
+                        f"汇总筛选完成，从 {len(all_questions)} 题精选为 {retained_count} 题",
+                        run_ctx=run_ctx,
+                        table_name=table_name,
+                        sheet_name=sheet_name,
+                        extra={
+                            "original_count": len(all_questions),
+                            "selected_count": retained_count,
+                            "dropped_count": agg_result.get("dropped_count"),
+                            "selection_reason": agg_result.get("selection_reason"),
+                        },
+                    )
+                else:
+                    selected = self._deterministic_select_questions(all_questions)
+                    self._apply_selected_questions(perspectives, selected)
+                    log_step_warn(
+                        STEP_AGGREGATE,
+                        f"汇总筛选未返回有效结果，已按规则降级精选 {len(selected)} / {len(all_questions)} 题",
+                        run_ctx=run_ctx,
+                        table_name=table_name,
+                        sheet_name=sheet_name,
+                        extra={"selected_count": len(selected), "original_count": len(all_questions)},
+                    )
+            except Exception as e:
+                logger.warning("汇总筛选失败: %s", e)
+                selected = self._deterministic_select_questions(all_questions)
+                self._apply_selected_questions(perspectives, selected)
+                log_step_warn(
+                    STEP_AGGREGATE,
+                    f"汇总筛选失败，已按规则降级精选 {len(selected)} / {len(all_questions)} 题: {e}",
+                    run_ctx=run_ctx,
+                    table_name=table_name,
+                    sheet_name=sheet_name,
+                    exc=e,
+                    extra={"selected_count": len(selected), "original_count": len(all_questions)},
+                )
+        else:
+            log_step_ok(
+                STEP_AGGREGATE,
+                f"问题数 {len(all_questions)} ≤ 8，跳过汇总筛选",
+                run_ctx=run_ctx,
+                table_name=table_name,
+                sheet_name=sheet_name,
+            )
+
+        # 再次清理空场景和空角色
+        for perspective in perspectives:
+            perspective["scenarios"] = [
+                s for s in perspective.get("scenarios", [])
+                if s.get("questions")
+            ]
+        perspectives = [p for p in perspectives if p.get("scenarios")]
+
         log_step_ok(
             STEP_BLUEPRINT_COMPLETE,
             f"蓝图组装完成，{len(perspectives)} 个有效角色",
@@ -270,7 +363,7 @@ class BIBlueprintPipeline:
             "business_one_liner": business_one_liner,
             "perspectives": list(perspectives),
             "warnings": warnings,
-            "pipeline_steps": ["role_picker", "scenarios", "questions", "review"],
+            "pipeline_steps": ["role_picker", "scenarios", "questions", "review", "aggregate"],
         }
 
     def _merge_review_questions(self, perspective: Dict[str, Any], review: Dict[str, Any]) -> None:
@@ -291,7 +384,7 @@ class BIBlueprintPipeline:
                 "questions": [],
             }
             perspective.setdefault("scenarios", []).append(supplement)
-        for aq in additional[:3]:
+        for aq in additional[:1]:
             aq = dict(aq)
             aq["from_review"] = True
             if not aq.get("scenario_id"):
@@ -301,3 +394,97 @@ class BIBlueprintPipeline:
                 supplement,
             )
             target.setdefault("questions", []).append(aq)
+
+    def _apply_selected_questions(
+        self,
+        perspectives: List[Dict[str, Any]],
+        selected_questions: List[Dict[str, Any]],
+    ) -> None:
+        selected_keys = {self._question_key(q) for q in selected_questions}
+        for perspective in perspectives:
+            pid = perspective.get("perspective_id")
+            for scenario in perspective.get("scenarios", []):
+                sid = scenario.get("scenario_id")
+                scenario["questions"] = [
+                    q for q in scenario.get("questions", [])
+                    if self._question_key({
+                        **q,
+                        "perspective_id": pid,
+                        "scenario_id": sid,
+                    }) in selected_keys
+                ]
+
+    def _count_questions(self, perspectives: List[Dict[str, Any]]) -> int:
+        return sum(
+            len(scenario.get("questions", []))
+            for perspective in perspectives
+            for scenario in perspective.get("scenarios", [])
+        )
+
+    def _deterministic_select_questions(self, questions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        buckets = {
+            "kpi": [],
+            "trend": [],
+            "structure": [],
+            "ranking": [],
+            "detail": [],
+            "other": [],
+        }
+        for question in questions:
+            buckets[self._question_bucket(question)].append(question)
+        for items in buckets.values():
+            items.sort(key=self._question_sort_key)
+
+        selected: List[Dict[str, Any]] = []
+        seen_keys = set()
+        for bucket in ("kpi", "trend", "structure", "ranking", "detail", "other"):
+            if buckets[bucket]:
+                self._append_selected(selected, seen_keys, buckets[bucket][0])
+
+        remaining = sorted(questions, key=self._question_sort_key)
+        for question in remaining:
+            if len(selected) >= self.MAX_SELECTED_QUESTIONS:
+                break
+            self._append_selected(selected, seen_keys, question)
+        return selected[:self.MAX_SELECTED_QUESTIONS]
+
+    def _append_selected(
+        self,
+        selected: List[Dict[str, Any]],
+        seen_keys: set,
+        question: Dict[str, Any],
+    ) -> None:
+        key = self._question_key(question)
+        if key in seen_keys:
+            return
+        selected.append(question)
+        seen_keys.add(key)
+
+    def _question_key(self, question: Dict[str, Any]) -> tuple:
+        return (
+            question.get("perspective_id") or "",
+            question.get("scenario_id") or "",
+            question.get("question_id") or question.get("title") or question.get("question") or "",
+        )
+
+    def _question_sort_key(self, question: Dict[str, Any]) -> tuple:
+        priority = int(question.get("priority") or 0)
+        field_count = len(question.get("metrics") or []) + len(question.get("dimensions") or [])
+        return (-priority, -field_count, question.get("title") or question.get("question") or "")
+
+    def _question_bucket(self, question: Dict[str, Any]) -> str:
+        text = " ".join(
+            str(question.get(key) or "")
+            for key in ("visual_intent", "sql_template_hint", "analysis_type", "analysis_intent", "question")
+        ).lower()
+        if any(k in text for k in ("kpi", "overview", "总览", "规模", "汇总")):
+            return "kpi"
+        if any(k in text for k in ("trend", "time", "mom", "yoy", "趋势", "走势", "按月", "逐日")):
+            return "trend"
+        if any(k in text for k in ("share", "structure", "占比", "结构", "分布")):
+            return "structure"
+        if any(k in text for k in ("ranking", "top", "bottom", "排名", "排行")):
+            return "ranking"
+        if any(k in text for k in ("detail", "anomaly", "明细", "清单", "异常")):
+            return "detail"
+        return "other"

@@ -38,8 +38,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { generateBIConfig, getBIConfig, getBIFilterOptions } from '../api'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { generateBIConfig, getBIConfig, getBIStatus, getBIFilterOptions } from '../api'
+import type { BIStatus } from '../api'
 import BIGeneratingExperience from './BIGeneratingExperience.vue'
 import BIInsightsBoard from './bi/BIInsightsBoard.vue'
 
@@ -53,10 +54,14 @@ const biConfig = ref<any>(null)
 const activeCategory = ref('')
 const generating = ref(false)
 const biError = ref('')
+const biStatus = ref<BIStatus>('none')
+const generationInFlight = ref(false)
 
 // 全局筛选
 const globalFilters = reactive<Record<string, any>>({})
 const filterOptions = ref<Array<{ field: string; type: string; sample_values: string[] }>>([])
+
+let statusPollTimer: ReturnType<typeof setInterval> | null = null
 
 // ============ Computed ============
 const charts = computed(() => biConfig.value?.charts || [])
@@ -80,12 +85,8 @@ const loadBIConfig = async () => {
     // 加载全局筛选选项
     await loadFilterOptions()
   } catch (err: any) {
-    if (err?.response?.status === 404) {
-      await generateBI()
-    } else {
-      console.error('获取BI配置失败:', err)
-      biError.value = err.message || '无法加载 BI 看板'
-    }
+    console.error('获取BI配置失败:', err)
+    biError.value = err.message || '无法加载 BI 看板'
   }
 }
 
@@ -98,7 +99,38 @@ const loadFilterOptions = async () => {
   }
 }
 
+const checkBIStatus = async () => {
+  try {
+    const res = await getBIStatus(props.fileId)
+    const status = res.data.data?.status as BIStatus
+    biStatus.value = status
+
+    if (status === 'completed') {
+      // 已完成，直接加载配置
+      stopStatusPoll()
+      await loadBIConfig()
+    } else if (status === 'generating') {
+      // 正在生成中，显示加载态并轮询
+      generating.value = true
+      biError.value = ''
+      startStatusPoll()
+    } else if (status === 'failed' || status === 'none') {
+      // 失败或未生成，启动生成
+      stopStatusPoll()
+      await generateBI()
+    } else if (status === 'blocked') {
+      // 理解尚未完成
+      biError.value = '数据理解尚未完成，请稍后再试'
+    }
+  } catch (err: any) {
+    console.error('查询BI状态失败:', err)
+    biError.value = err.message || '无法查询 BI 状态'
+  }
+}
+
 const generateBI = async () => {
+  if (generationInFlight.value) return
+  generationInFlight.value = true
   generating.value = true
   biError.value = ''
 
@@ -114,6 +146,7 @@ const generateBI = async () => {
     biError.value = err.message || '未知错误'
     return
   } finally {
+    generationInFlight.value = false
     if (!biError.value) {
       setTimeout(() => {
         generating.value = false
@@ -125,21 +158,60 @@ const generateBI = async () => {
 }
 
 const regenerateBI = () => {
+  if (generationInFlight.value) return
   biConfig.value = null
   activeCategory.value = ''
+  stopStatusPoll()
   generateBI()
 }
 
 const retryGenerate = () => {
+  if (generationInFlight.value) return
   biError.value = ''
+  stopStatusPoll()
   generateBI()
+}
+
+// ============ 状态轮询 ============
+function startStatusPoll() {
+  stopStatusPoll()
+  statusPollTimer = setInterval(async () => {
+    try {
+      const res = await getBIStatus(props.fileId)
+      const status = res.data.data?.status as BIStatus
+      biStatus.value = status
+      if (status === 'completed') {
+        stopStatusPoll()
+        generating.value = false
+        await loadBIConfig()
+      } else if (status === 'failed') {
+        stopStatusPoll()
+        generating.value = false
+        biError.value = 'BI 生成失败，请重试'
+      }
+      // generating 状态继续轮询
+    } catch (err) {
+      console.error('轮询BI状态失败:', err)
+    }
+  }, 10000)
+}
+
+function stopStatusPoll() {
+  if (statusPollTimer) {
+    clearInterval(statusPollTimer)
+    statusPollTimer = null
+  }
 }
 
 // ============ Lifecycle ============
 onMounted(() => {
   if (props.fileId) {
-    loadBIConfig()
+    checkBIStatus()
   }
+})
+
+onUnmounted(() => {
+  stopStatusPoll()
 })
 
 watch(
@@ -148,8 +220,12 @@ watch(
     if (newVal) {
       biConfig.value = null
       activeCategory.value = ''
+      biError.value = ''
+      biStatus.value = 'none'
+      generationInFlight.value = false
       Object.keys(globalFilters).forEach(k => delete globalFilters[k])
-      loadBIConfig()
+      stopStatusPoll()
+      checkBIStatus()
     }
   }
 )

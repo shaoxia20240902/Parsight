@@ -26,6 +26,7 @@ from app.services.bi_pipeline_logger import (
     log_step_error,
     log_step_ok,
 )
+from app.services.db_service import _json_default, json_safe
 from app.utils.sql_validator import SQLValidator
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ router = APIRouter(prefix="/api/bi", tags=["bi"])
 
 # 全局 BI 智能体实例
 bi_agent = BIClassificationAgent()
+_generation_locks: Dict[str, asyncio.Lock] = {}
 
 
 class ChartDataRequest(BaseModel):
@@ -90,11 +92,41 @@ async def generate_bi_config(file_id: str, db: AsyncSession = Depends(get_db)):
     if not ready:
         raise HTTPException(status_code=409, detail=understanding_gate_http_detail(pending))
 
+    existing_status = await db_service.get_bi_status(file_id)
+    if existing_status == "generating":
+        raise HTTPException(status_code=409, detail="BI 看板正在生成中，请等待当前任务完成后再重新生成")
+
+    lock = _generation_locks.setdefault(file_id, asyncio.Lock())
+    if lock.locked():
+        raise HTTPException(status_code=409, detail="BI 看板正在生成中，请等待当前任务完成后再重新生成")
+
+    await lock.acquire()
+    await db_service.update_bi_status(file_id, "generating")
+
     async def event_generator():
         try:
-            await db_service.clear_bi_config(file_id)
+            async for event in _generate_bi_events(file_id, file_record, sheet_metas):
+                yield event
+        finally:
+            lock.release()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def _generate_bi_events(file_id: str, file_record: Any, sheet_metas: List[Any]):
+    async with async_session() as event_db:
+        db_service = DBService(event_db)
+        try:
             await db_service.clear_bi_thinking_journal(file_id)
-            yield f"data: {json.dumps({'step': 'bi_start', 'status': 'processing'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'step': 'bi_start', 'status': 'processing'}, ensure_ascii=False, default=_json_default)}\n\n"
             persist_lock = asyncio.Lock()
 
             async def persist_thinking_entry(entry: Dict[str, Any]) -> None:
@@ -144,7 +176,7 @@ async def generate_bi_config(file_id: str, db: AsyncSession = Depends(get_db)):
                     "time_range": meta.time_range or "未知",
                 })
 
-            yield f"data: {json.dumps({'step': 'bi_generating', 'status': 'processing'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'step': 'bi_generating', 'status': 'processing'}, ensure_ascii=False, default=_json_default)}\n\n"
 
             try:
                 bi_config = await BIBusinessGenerator(db_service).generate(
@@ -153,14 +185,16 @@ async def generate_bi_config(file_id: str, db: AsyncSession = Depends(get_db)):
                     on_thinking_entry=persist_thinking_entry,
                 )
             except UnderstandingNotReadyError as e:
-                yield f"data: {json.dumps({'step': 'error', 'status': 'error', 'message': '表理解尚未完成', **understanding_gate_http_detail(e.pending_sheets)}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'step': 'error', 'status': 'error', 'message': '表理解尚未完成', **understanding_gate_http_detail(e.pending_sheets)}, ensure_ascii=False, default=_json_default)}\n\n"
                 return
 
             thinking = bi_config.pop("thinking_journal", None)
             if thinking:
                 await db_service.set_bi_thinking_journal(file_id, thinking)
 
+            bi_config = json_safe(bi_config)
             await db_service.update_bi_config(file_id, bi_config)
+            await db_service.update_bi_status(file_id, "completed")
             if file_record.status != "analyzed":
                 await db_service.update_file_status(file_id, "analyzed")
 
@@ -168,22 +202,17 @@ async def generate_bi_config(file_id: str, db: AsyncSession = Depends(get_db)):
             categories_count = len(bi_config.get("categories", []))
             charts_count = len(bi_config.get("charts", []))
 
-            yield f"data: {json.dumps({'step': 'bi_completed', 'status': 'completed', 'categories_count': categories_count, 'charts_count': charts_count, 'data': bi_config}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(json_safe({'step': 'bi_completed', 'status': 'completed', 'categories_count': categories_count, 'charts_count': charts_count, 'data': bi_config}), ensure_ascii=False, default=_json_default)}\n\n"
 
+        except asyncio.CancelledError:
+            logger.warning("BI生成连接已取消，重置生成状态: file_id=%s", file_id)
+            await db_service.update_bi_status(file_id, "failed")
+            raise
         except Exception as e:
             error_detail = traceback.format_exc()
             logger.error(f"BI生成错误: {error_detail}")
-            yield f"data: {json.dumps({'step': 'error', 'status': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+            await db_service.update_bi_status(file_id, "failed")
+            yield f"data: {json.dumps({'step': 'error', 'status': 'error', 'message': str(e)}, ensure_ascii=False, default=_json_default)}\n\n"
 
 
 @router.get("/thinking/{file_id}")
@@ -225,14 +254,35 @@ async def get_bi_status(file_id: str, db: AsyncSession = Depends(get_db)):
     if not file_record:
         raise HTTPException(status_code=404, detail="文件不存在")
 
+    bi_status = await db_service.get_bi_status(file_id)
     bi_config = await db_service.get_bi_config(file_id)
-    if bi_config:
+
+    # 有配置且状态已完成
+    if bi_config and bi_status == "completed":
         return {
             "code": 200,
             "data": {
                 "status": "completed",
                 "categories_count": len(bi_config.get("categories", [])),
                 "charts_count": len(bi_config.get("charts", [])),
+            },
+        }
+
+    # 正在生成中
+    if bi_status == "generating":
+        return {
+            "code": 200,
+            "data": {
+                "status": "generating",
+            },
+        }
+
+    # 生成失败
+    if bi_status == "failed":
+        return {
+            "code": 200,
+            "data": {
+                "status": "failed",
             },
         }
 

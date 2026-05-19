@@ -221,7 +221,8 @@ const canAddCategory = computed(
 const boardCountByCategory = computed(() => {
   const counts: Record<string, number> = {}
   for (const c of charts.value) {
-    if (c.onBoard) {
+    // kpi_group 不计入分类数量统计
+    if (c.onBoard && c.chartType !== 'kpi_group') {
       counts[c.categoryId] = (counts[c.categoryId] || 0) + 1
     }
   }

@@ -28,6 +28,21 @@ async def seed_admin():
             print("管理员账号已存在，跳过创建")
 
 
+async def seed_llm_config():
+    """初始化默认 LLM 配置"""
+    from app.services.llm_config_service import LLMConfigService
+    from app.services.llm_client import set_llm_config
+    async with async_session() as db:
+        service = LLMConfigService(db)
+        await service.ensure_default_config()
+        active = await service.get_active_config()
+        if active:
+            set_llm_config(active)
+            print(f"LLM 配置已加载: {active['name']} ({active['primary_model']})")
+        else:
+            print("未找到活跃 LLM 配置")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
@@ -36,6 +51,8 @@ async def lifespan(app: FastAPI):
     print("数据库初始化完成")
     # 种子数据：管理员账号
     await seed_admin()
+    # 种子数据：默认 LLM 配置
+    await seed_llm_config()
     yield
     # 关闭时清理资源
     print("应用关闭")

@@ -423,3 +423,17 @@ async def dashboard_layout(request: DashboardLayoutRequest, db: AsyncSession = D
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.get("/recommendations")
+async def get_chat_recommendations(file_id: str, db: AsyncSession = Depends(get_db)):
+    """获取对话推荐问题（基于数据理解动态生成）"""
+    db_service = DBService(db)
+    result = await db_service.get_recommended_questions(file_id)
+    return {
+        "code": 200,
+        "data": {
+            "questions": result.get("questions"),
+            "status": result.get("status", "idle"),
+        }
+    }

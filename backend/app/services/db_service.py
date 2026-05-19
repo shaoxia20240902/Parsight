@@ -18,6 +18,21 @@ def _json_default(value: Any):
     raise TypeError(f"Object of type {value.__class__.__name__} is not JSON serializable")
 
 
+def json_safe(value: Any) -> Any:
+    """Recursively convert DB/driver values into JSON-serializable primitives."""
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [json_safe(v) for v in value]
+    if isinstance(value, tuple):
+        return [json_safe(v) for v in value]
+    return value
+
+
 def _normalize_columns(columns_data: Any) -> List[Dict[str, Any]]:
     """将 columns 数据规范化为统一的 List[Dict] 格式。
 
@@ -164,7 +179,7 @@ class DBService:
             result = await self.db.execute(text(sql))
             columns = result.keys()
             rows = result.fetchall()
-            return [dict(zip(columns, row)) for row in rows]
+            return [json_safe(dict(zip(columns, row))) for row in rows]
         except Exception as e:
             print(f"SQL执行失败: {sql}")
             print(f"错误: {str(e)}")
@@ -204,7 +219,7 @@ class DBService:
 
     async def clear_table_data(self, table_name: str):
         """清空动态表数据（保留表结构）"""
-        await self.db.execute(text(f'DELETE FROM "{table_name}"'))
+        await self.db.execute(text(f"DELETE FROM `{table_name}`"))
         await self.db.commit()
 
     async def update_sheet_row_count(self, table_name: str, row_count: int):
@@ -225,7 +240,7 @@ class DBService:
 
     async def fetch_all_table_rows(self, table_name: str) -> List[Dict[str, Any]]:
         """读取动态表全部行（用于导出）"""
-        result = await self.db.execute(text(f'SELECT * FROM "{table_name}"'))
+        result = await self.db.execute(text(f"SELECT * FROM `{table_name}`"))
         columns = list(result.keys())
         return [dict(zip(columns, row)) for row in result.fetchall()]
 
@@ -295,7 +310,7 @@ class DBService:
             """),
             {
                 "id": file_id,
-                "bi_config": json.dumps(bi_config, ensure_ascii=False, default=_json_default),
+                "bi_config": json.dumps(json_safe(bi_config), ensure_ascii=False, default=_json_default),
             }
         )
         await self.db.commit()
@@ -385,6 +400,67 @@ class DBService:
             if raw:
                 return json.loads(raw) if isinstance(raw, str) else raw
         return None
+
+    async def update_bi_status(self, file_id: str, status: str) -> None:
+        """更新 BI 生成状态"""
+        await self.db.execute(
+            text("UPDATE file_records SET bi_status = :status WHERE id = :id"),
+            {"id": file_id, "status": status},
+        )
+        await self.db.commit()
+
+    async def get_bi_status(self, file_id: str) -> Optional[str]:
+        """获取 BI 生成状态"""
+        result = await self.db.execute(
+            text("SELECT bi_status FROM file_records WHERE id = :id"),
+            {"id": file_id},
+        )
+        row = result.first()
+        return row._mapping.get("bi_status") if row else None
+
+    async def save_recommended_questions(
+        self, file_id: str, questions: Dict[str, Any], status: str = "completed"
+    ) -> None:
+        """保存对话推荐问题"""
+        await self.db.execute(
+            text("""
+                UPDATE file_records
+                SET recommended_questions = :questions,
+                    recommended_questions_status = :status
+                WHERE id = :id
+            """),
+            {
+                "id": file_id,
+                "questions": json.dumps(questions, ensure_ascii=False),
+                "status": status,
+            },
+        )
+        await self.db.commit()
+
+    async def get_recommended_questions(self, file_id: str) -> Dict[str, Any]:
+        """获取对话推荐问题"""
+        result = await self.db.execute(
+            text("""
+                SELECT recommended_questions, recommended_questions_status
+                FROM file_records WHERE id = :id
+            """),
+            {"id": file_id},
+        )
+        row = result.first()
+        if not row:
+            return {"questions": None, "status": "idle"}
+        raw = row._mapping.get("recommended_questions")
+        status = row._mapping.get("recommended_questions_status") or "idle"
+        if not raw:
+            return {"questions": None, "status": status}
+        if isinstance(raw, str):
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                return {"questions": None, "status": status}
+        else:
+            data = raw
+        return {"questions": data, "status": status}
 
     async def get_builder_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         result = await self.db.execute(

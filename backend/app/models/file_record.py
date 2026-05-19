@@ -19,3 +19,6 @@ class FileRecord(Base):
     space_id = Column(String(36), nullable=True)
     bi_config = Column(JSON)  # BI看板配置（分类+图表列表）
     bi_thinking_journal = Column(JSON)  # BI 生成思考过程（自然语言条目列表）
+    bi_status = Column(String(20), default="idle")  # idle/generating/completed/failed
+    recommended_questions = Column(JSON)  # 对话推荐问题
+    recommended_questions_status = Column(String(20), default="idle")  # idle/generating/completed/failed

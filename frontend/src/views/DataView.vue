@@ -639,6 +639,7 @@ const relationsProgressStages: ProgressStage[] = [
   { title: '关联识别', desc: '识别字段关系与跨表业务链路' },
   { title: '异常复核', desc: '核对可疑关联和口径冲突' },
   { title: '关联洞察', desc: '整合复核结果，形成关联总结' },
+  { title: '生成推荐问题', desc: '基于数据理解生成对话推荐问题' },
   { title: '完成', desc: '关联总结已更新' }
 ]
 
@@ -659,6 +660,9 @@ const showUnderstandingStageProgress = computed(() => {
 const activeRelationsStageIndex = computed(() => {
   if (relationsVerificationStatus.value === 'verifying') return 2
   if (loadingRelations.value || regeneratingRelations.value) return 1
+  // 如果空间下有文件正在生成推荐问题，显示第5步
+  const hasGeneratingRec = tables.value.some((f: any) => f.status === 'generating_recommendations')
+  if (hasGeneratingRec) return 4
   return 0
 })
 

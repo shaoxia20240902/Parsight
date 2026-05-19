@@ -22,7 +22,7 @@ async def get_db():
 async def init_db():
     # Import model modules before create_all so SQLAlchemy metadata includes
     # feature tables that are not referenced by startup code directly.
-    from app.models import builder_session, business_knowledge, user_preference  # noqa: F401
+    from app.models import builder_session, business_knowledge, user_preference, llm_config  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -44,6 +44,9 @@ async def migrate_db():
         ("file_records", "bi_thinking_journal", "JSON"),
         ("chat_history", "mode", "TEXT"),
         ("chat_history", "session_id", "VARCHAR(36)"),
+        ("file_records", "recommended_questions", "JSON"),
+        ("file_records", "recommended_questions_status", "TEXT"),
+        ("file_records", "bi_status", "TEXT"),
     ]
     async with engine.begin() as conn:
         for table, column, col_type in migrations:

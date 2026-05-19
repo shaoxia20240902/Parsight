@@ -152,8 +152,8 @@ class BIChartTypeResolver:
 
 
 class BIBusinessGenerator:
-    MAX_WAREHOUSE = 100
-    MAX_BOARD_PER_CATEGORY = 10
+    MAX_WAREHOUSE = 50
+    MAX_BOARD_PER_CATEGORY = 8
 
     def __init__(self, db_service: DBService, concurrency: int = 4):
         self.db = db_service
@@ -167,6 +167,7 @@ class BIBusinessGenerator:
         self.sql_builder = BISQLBuilder()
         self.chart_resolver = BIChartTypeResolver()
         self.sem = asyncio.Semaphore(concurrency)
+        self.chart_draft_sem = asyncio.Semaphore(concurrency)
 
     async def generate(
         self,
@@ -252,6 +253,7 @@ class BIBusinessGenerator:
         categories = self._build_sheet_categories(profiles, sheet_plan)
 
         charts_dropped: List[Dict[str, Any]] = []
+        sheet_errors: List[Dict[str, Any]] = []
         all_charts: List[Dict[str, Any]] = []
 
         async def _run_sheet(profile: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -266,13 +268,18 @@ class BIBusinessGenerator:
             except Exception as e:
                 log_step_error(
                     STEP_SHEET_PIPELINE,
-                    "单 Sheet 流水线失败",
+                    "单 Sheet 流水线失败，已跳过该 Sheet",
                     run_ctx=run_ctx,
                     table_name=profile.get("table_name"),
                     sheet_name=profile.get("sheet_name"),
                     exc=e,
                 )
-                raise
+                sheet_errors.append({
+                    "table_name": profile.get("table_name"),
+                    "sheet_name": profile.get("sheet_name"),
+                    "error": str(e),
+                })
+                return []
 
         sheet_chart_groups = await asyncio.gather(*[_run_sheet(p) for p in profiles])
         for group in sheet_chart_groups:
@@ -289,13 +296,14 @@ class BIBusinessGenerator:
             categories.extend(relation_categories)
             all_charts.extend(relation_charts)
 
-        valid_charts = []
-        for chart in all_charts:
-            result = await self._limited(
+        # 并发执行图表 SQL 预览与修复（受信号量限制并发数）
+        chart_results = await asyncio.gather(*[
+            self._limited(
                 self._execute_chart_with_repair(chart, profiles, understanding_map, charts_dropped, run_ctx)
             )
-            if result:
-                valid_charts.append(result)
+            for chart in all_charts
+        ])
+        valid_charts = [r for r in chart_results if r]
 
         valid_charts = self._rank_and_layout(valid_charts)
         valid_charts = self._limit_warehouse_balanced(valid_charts)
@@ -308,6 +316,7 @@ class BIBusinessGenerator:
                 "sheet_count": len(profiles),
                 "chart_count": len(valid_charts),
                 "charts_dropped_count": len(charts_dropped),
+                "sheet_errors_count": len(sheet_errors),
                 "relationship_count": len(relationships),
             },
         )
@@ -328,7 +337,10 @@ class BIBusinessGenerator:
                 "chart_count": len(valid_charts),
                 "strategy": "v3_stepped_blueprint_repair",
                 "pipeline_run_id": run_ctx.run_id,
+                "max_board_per_category": self.MAX_BOARD_PER_CATEGORY,
+                "max_warehouse": self.MAX_WAREHOUSE,
                 "sheet_plan_warnings": sheet_plan.get("warnings", []),
+                "sheet_errors": sheet_errors,
                 "charts_dropped": charts_dropped,
                 "thinking_entry_count": len(journal.entries),
             },
@@ -358,19 +370,37 @@ class BIBusinessGenerator:
 
         charts.extend(self._build_summary_charts(profile, category_id))
 
-        blueprint = await self.blueprint_pipeline.run(
-            profile, understanding_text, industry_guess, run_ctx=run_ctx,
-        )
+        try:
+            blueprint = await self.blueprint_pipeline.run(
+                profile, understanding_text, industry_guess, run_ctx=run_ctx,
+            )
+        except Exception as e:
+            log_step_warn(
+                STEP_SHEET_PIPELINE,
+                "蓝图生成失败，保留 Sheet 总览图并继续",
+                run_ctx=run_ctx,
+                table_name=table_name,
+                sheet_name=sheet_name,
+                exc=e,
+            )
+            return charts
 
-        for perspective in blueprint.get("perspectives", []):
-            for scenario in perspective.get("scenarios", []):
-                for question in scenario.get("questions", []):
-                    chart = await self._question_to_chart_draft(
-                        profile, category_id, perspective, scenario, question, run_ctx,
-                        understanding_text, industry_guess,
-                    )
-                    if chart:
-                        charts.append(chart)
+        question_contexts = [
+            (perspective, scenario, question)
+            for perspective in blueprint.get("perspectives", [])
+            for scenario in perspective.get("scenarios", [])
+            for question in scenario.get("questions", [])
+        ]
+        chart_drafts = await asyncio.gather(*[
+            self._limited_chart_draft(
+                self._question_to_chart_draft(
+                    profile, category_id, perspective, scenario, question, run_ctx,
+                    understanding_text, industry_guess,
+                )
+            )
+            for perspective, scenario, question in question_contexts
+        ])
+        charts.extend([chart for chart in chart_drafts if chart])
 
         log_step_ok(
             STEP_SHEET_PIPELINE,
@@ -378,7 +408,10 @@ class BIBusinessGenerator:
             run_ctx=run_ctx,
             table_name=table_name,
             sheet_name=sheet_name,
-            extra={"blueprint_warnings": blueprint.get("warnings")},
+            extra={
+                "blueprint_warnings": blueprint.get("warnings"),
+                "selected_question_count": len(question_contexts),
+            },
         )
         return charts
 
@@ -485,6 +518,27 @@ class BIBusinessGenerator:
         fallback = self.chart_resolver.resolve(
             spec, profile, template_chart_type, template_sql, template_summary_sql,
         )
+        if self._can_use_template_sql(spec, fallback[0]):
+            log_step_ok(
+                STEP_COMPILE_SQL,
+                "模板 SQL 生成完成，跳过 SQL LLM",
+                run_ctx=run_ctx,
+                table_name=profile.get("table_name"),
+                sheet_name=profile.get("sheet_name"),
+                perspective_id=perspective.get("perspective_id"),
+                role_name=perspective.get("role_name"),
+                scenario_id=scenario.get("scenario_id"),
+                scenario_name=scenario.get("scenario_name"),
+                question_id=question.get("question_id"),
+                extra={
+                    "chart_type": fallback[0],
+                    "intent_type": fallback[4],
+                    "sql_preview": fallback[1][:600],
+                    "summary_sql_preview": fallback[2][:400] if fallback[2] else None,
+                    "sql_source": "template_sql",
+                },
+            )
+            return fallback
         try:
             result = await self.sql_agent.run({
                 "question": question,
@@ -540,6 +594,23 @@ class BIBusinessGenerator:
                 extra={"question": question.get("question"), "template_sql": template_sql[:500]},
             )
             return fallback
+
+    def _can_use_template_sql(self, spec: Dict[str, Any], chart_type: str) -> bool:
+        analysis_type = spec.get("analysis_type")
+        if spec.get("derived_kpi_hint") or analysis_type in {"derived_kpi", "target_achievement", "funnel", "cohort"}:
+            return False
+        if chart_type == "combo":
+            return False
+        return analysis_type in {
+            "kpi",
+            "trend",
+            "growth_rate",
+            "share",
+            "structure",
+            "ranking",
+            "detail",
+            "anomaly_list",
+        }
 
     def _apply_analysis_guards(
         self, spec: Dict[str, Any], profile: Dict[str, Any], question: Dict[str, Any]
@@ -866,6 +937,10 @@ class BIBusinessGenerator:
 
     async def _limited(self, coro):
         async with self.sem:
+            return await coro
+
+    async def _limited_chart_draft(self, coro):
+        async with self.chart_draft_sem:
             return await coro
 
     async def _load_sheets_data(self, file_id: str) -> List[Dict[str, Any]]:

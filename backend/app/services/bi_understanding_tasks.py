@@ -4,6 +4,7 @@ import asyncio
 import logging
 
 from app.agents.understanding_agent import TableUnderstandingAgent
+from app.agents.recommendation_agent import ChatRecommendationAgent
 from app.models.database import async_session
 from app.services.ai_service import AIService
 from app.services.db_service import DBService
@@ -12,6 +13,55 @@ from app.services.understanding_verification import run_understanding_verificati
 logger = logging.getLogger(__name__)
 
 _running_files: set[str] = set()
+
+
+async def _generate_recommendations(db_service: DBService, file_id: str, sheets_info: list) -> None:
+    """基于 Sheet 理解和关联总结生成对话推荐问题。"""
+    agent = ChatRecommendationAgent()
+
+    # 收集所有 Sheet 的理解内容
+    sheets_data = []
+    for sheet in sheets_info:
+        table_name = sheet["table_name"]
+        understanding = await db_service.get_understanding_content(table_name)
+        columns = await db_service.get_table_columns(table_name)
+        meta = await db_service.get_sheet_meta_by_table(table_name)
+        sheets_data.append({
+            "sheet_name": sheet["name"],
+            "table_name": table_name,
+            "understanding": understanding.get("content", "") if understanding else "",
+            "fields": [c.get("name") or c.get("field") for c in columns],
+            "row_count": meta.row_count if meta else 0,
+        })
+
+    # 获取关联总结（如果空间有）
+    file_record = await db_service.get_file_record(file_id)
+    relations_summary = ""
+    if file_record and file_record.space_id:
+        relations = await db_service.get_space_relations(file_record.space_id)
+        if relations:
+            relations_summary = relations.get("content", "")
+
+    try:
+        result = await agent.run({
+            "sheets": sheets_data,
+            "relations_summary": relations_summary,
+            "file_summary": sheets_data[0]["understanding"][:500] if sheets_data else "",
+        })
+        await db_service.save_recommended_questions(
+            file_id,
+            {
+                "insight_groups": result.get("insight_groups", []),
+                "deep_questions": result.get("deep_questions", []),
+                "builder_questions": result.get("builder_questions", []),
+            },
+            status="completed",
+        )
+        logger.info("文件 %s 推荐问题生成完成", file_id)
+    except Exception as e:
+        logger.warning("文件 %s 推荐问题生成失败: %s", file_id, e)
+        await db_service.save_recommended_questions(file_id, {}, status="failed")
+        raise
 
 
 async def run_post_upload_understanding(file_id: str, sheets_info: list) -> None:
@@ -62,6 +112,13 @@ async def _run_impl(file_id: str, sheets_info: list) -> None:
                 table_name, understanding_content, verification_status="verifying"
             )
             asyncio.create_task(run_understanding_verification(table_name))
+
+        # 生成对话推荐问题
+        try:
+            await db_service.update_file_status(file_id, "generating_recommendations")
+            await _generate_recommendations(db_service, file_id, sheets_info)
+        except Exception as e:
+            logger.warning("文件 %s 推荐问题生成失败: %s", file_id, e)
 
         await db_service.update_file_status(file_id, "understanding_ready")
         logger.info("文件 %s 全部表理解已完成，状态 understanding_ready", file_id)

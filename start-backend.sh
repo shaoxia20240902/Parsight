@@ -11,7 +11,7 @@ YELLOW='\033[1;31m'
 NC='\033[0m'
 
 # 配置
-PORT=${SERVER_PORT:-8000}
+PORT=${SERVER_PORT:-8007}
 HOST="0.0.0.0"
 BACKEND_DIR="$(cd "$(dirname "$0")" && pwd)/backend"
 

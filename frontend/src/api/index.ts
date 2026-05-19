@@ -115,7 +115,7 @@ export const generateBIConfig = async (
   return { data: { code: 200, data: finalData } }
 }
 
-export type BIStatus = 'completed' | 'none' | 'blocked'
+export type BIStatus = 'completed' | 'generating' | 'failed' | 'none' | 'blocked'
 
 export type BIThinkingEntry = {
   id: string
@@ -229,6 +229,20 @@ export const regenerateChart = (
     chart_id: chartId,
     user_requirement: userRequirement,
   })
+}
+
+export const getChatRecommendations = (fileId: string) => {
+  return api.get<{
+    code: number
+    data: {
+      questions: {
+        insight_groups?: Array<{ title: string; questions: string[] }>
+        deep_questions?: string[]
+        builder_questions?: string[]
+      } | null
+      status: string
+    }
+  }>(`/chat/recommendations`, { params: { file_id: fileId } })
 }
 
 export default api

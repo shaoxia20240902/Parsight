@@ -64,3 +64,56 @@ export const createUser = (payload: {
 
 export const deleteUser = (userId: string) =>
   api.delete(`/admin/users/${encodeURIComponent(userId)}`)
+
+export interface LLMConfigItem {
+  id: string
+  name: string
+  api_base: string
+  api_key: string
+  primary_model: string
+  alt_model: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export const listLLMConfigs = () =>
+  api.get<{ data: LLMConfigItem[] }>('/admin/llm-configs')
+
+export const createLLMConfig = (payload: Omit<LLMConfigItem, 'id' | 'created_at' | 'updated_at'>) =>
+  api.post<{ data: LLMConfigItem }>('/admin/llm-configs', payload)
+
+export const updateLLMConfig = (id: string, payload: Partial<Omit<LLMConfigItem, 'id' | 'created_at' | 'updated_at'>>) =>
+  api.put<{ data: LLMConfigItem }>(`/admin/llm-configs/${encodeURIComponent(id)}`, payload)
+
+export const deleteLLMConfig = (id: string) =>
+  api.delete(`/admin/llm-configs/${encodeURIComponent(id)}`)
+
+export const activateLLMConfig = (id: string) =>
+  api.post<{ data: LLMConfigItem }>(`/admin/llm-configs/${encodeURIComponent(id)}/activate`)
+
+export const testLLMConfig = (payload: { api_base: string; api_key: string; primary_model: string }) =>
+  api.post<{ data: { success: boolean; model?: string; error?: string } }>('/admin/llm-configs/test', payload)
+
+export interface AdminSpace {
+  id: string
+  name: string
+  code: string
+  description: string
+  owner_id: string
+  owner_name: string
+  is_active: boolean
+  created_at: string
+}
+
+export const listSpaces = () =>
+  api.get<{ data: AdminSpace[] }>('/admin/spaces')
+
+export const createSpace = (payload: { name: string; owner_id: string; code?: string; description?: string }) =>
+  api.post('/admin/spaces', payload)
+
+export const updateSpace = (id: string, payload: { name?: string; description?: string }) =>
+  api.put(`/admin/spaces/${encodeURIComponent(id)}`, payload)
+
+export const deleteSpace = (id: string) =>
+  api.delete(`/admin/spaces/${encodeURIComponent(id)}`)
