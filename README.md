@@ -114,6 +114,34 @@ npm run build
 
 代码变更时请同步更新对应文档。
 
+## 开源声明 / Open Source
+
+Parsight 基于 **MIT License** 开源，欢迎自由使用、修改、分发和商业应用。
+
+我们采用**共创协作**模式：
+
+- 任何人都可以 Fork 本项目并提交 Pull Request
+- 核心维护者负责 Code Review 和合并决策
+- 贡献者将在 CONTRIBUTORS 中得到署名认可
+- 欢迎通过 Issue 提交功能建议、Bug 报告和使用反馈
+
+### 如何贡献 / Contributing
+
+1. **Fork** 本仓库到你的 GitHub 账号
+2. 创建特性分支：`git checkout -b feature/your-feature-name`
+3. 提交你的修改：`git commit -m "feat: add your feature"`
+4. 推送到你的 Fork：`git push origin feature/your-feature-name`
+5. 向本仓库提交 **Pull Request**，描述修改内容和目的
+6. 核心维护者将 Review 并合并你的贡献
+
+### 协作规范
+
+- 提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/) 格式
+- 代码变更需同步更新对应文档（`docs/` 目录）
+- 前端需遵循 `CLAUDE.md` 中的 Apple 极简设计规范
+- PR 描述中请附上测试说明或截图
+
 ## License
 
-未指定。
+本项目基于 [MIT License](./LICENSE) 开源。
+
