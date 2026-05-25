@@ -145,6 +145,7 @@ const props = defineProps<{
   charts: BIChartItem[]
   categories: BICategory[]
   devMode: boolean
+  demoMode?: boolean
   boardCountByCategory: Record<string, number>
 }>()
 
@@ -225,7 +226,7 @@ function closeEdit() {
 }
 
 async function submitEdit() {
-  if (!canSubmitEdit.value || !editingChartId.value || !props.fileId) return
+  if (!canSubmitEdit.value || !editingChartId.value || (!props.fileId && !props.demoMode)) return
   const payload: BIChartEditPayload = {
     id: editingChartId.value,
     title: editForm.title.trim(),
@@ -234,11 +235,13 @@ async function submitEdit() {
   }
   savingEdit.value = true
   try {
-    await updateBIChart(props.fileId, payload.id, {
-      title: payload.title,
-      description: payload.description,
-      category_id: payload.categoryId
-    })
+    if (!props.demoMode) {
+      await updateBIChart(props.fileId, payload.id, {
+        title: payload.title,
+        description: payload.description,
+        category_id: payload.categoryId
+      })
+    }
     emit('chart-updated', payload)
     editVisible.value = false
     editingChartId.value = ''

@@ -47,7 +47,7 @@ export const getTableRows = (
 export const getTableUnderstanding = (tableName: string, regenerate = false) => {
   return api.get(`/data/table/${encodeURIComponent(tableName)}/understanding`, {
     params: { regenerate },
-    timeout: 120000
+    timeout: 1800000
   })
 }
 
@@ -177,6 +177,158 @@ export const exportSpaceData = async (spaceId: string, filename?: string) => {
   a.click()
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
+}
+
+/** SSE 流式生成表理解 */
+export const generateTableUnderstandingStream = (
+  tableName: string,
+  regenerate = false,
+  onChunk: (chunk: string) => void,
+  onDone?: (data: { content: string; verification_status: string; updated_at?: string }) => void,
+  onError?: (message: string) => void
+): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    const token = localStorage.getItem('xlsx-bi-token')
+    const url = `/api/data/table/${encodeURIComponent(tableName)}/understanding/stream?regenerate=${regenerate}`
+
+    fetch(url, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    }).then(async (response) => {
+      if (!response.ok) {
+        let detail = '生成失败'
+        try {
+          const err = await response.json()
+          detail = err.detail || detail
+        } catch { /* ignore */ }
+        reject(new Error(detail))
+        return
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        reject(new Error('不支持流式响应'))
+        return
+      }
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let fullContent = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const data = JSON.parse(line.slice(6))
+            if (data.chunk) {
+              fullContent += data.chunk
+              onChunk(data.chunk)
+            }
+            if (data.phase && data.data) {
+              onDone?.(data.data)
+            }
+            if (data.done) {
+              onDone?.(data.data || { content: fullContent, verification_status: 'verifying' })
+              resolve()
+              return
+            }
+            if (data.error) {
+              onError?.(data.error)
+              reject(new Error(data.error))
+              return
+            }
+            if (data.status === 'generating') {
+              reject(new Error('GENERATING_IN_BACKGROUND'))
+              return
+            }
+          } catch { /* skip */ }
+        }
+      }
+
+      resolve()
+    }).catch(reject)
+  })
+}
+
+/** SSE 流式生成空间关联总结 */
+export const generateRelationsStream = (
+  spaceId: string,
+  regenerate = false,
+  onChunk: (chunk: string) => void,
+  onDone?: (data: { content: string; content_initial?: string; verification_status: string; updated_at?: string }) => void,
+  onError?: (message: string) => void
+): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    const token = localStorage.getItem('xlsx-bi-token')
+    const url = `/api/data/relations/stream?space_id=${encodeURIComponent(spaceId)}&regenerate=${regenerate}`
+
+    fetch(url, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    }).then(async (response) => {
+      if (!response.ok) {
+        let detail = '生成失败'
+        try {
+          const err = await response.json()
+          detail = err.detail || detail
+        } catch { /* ignore */ }
+        reject(new Error(detail))
+        return
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        reject(new Error('不支持流式响应'))
+        return
+      }
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let fullContent = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const data = JSON.parse(line.slice(6))
+            if (data.chunk) {
+              fullContent += data.chunk
+              onChunk(data.chunk)
+            }
+            if (data.phase && data.data) {
+              onDone?.(data.data)
+            }
+            if (data.done) {
+              onDone?.(data.data || { content: fullContent, verification_status: 'completed' })
+              resolve()
+              return
+            }
+            if (data.error) {
+              onError?.(data.error)
+              reject(new Error(data.error))
+              return
+            }
+          } catch { /* skip */ }
+        }
+      }
+
+      resolve()
+    }).catch(reject)
+  })
 }
 
 /** SSE 流式上传文件 */

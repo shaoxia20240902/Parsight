@@ -58,24 +58,8 @@ SHENZHOU_API_KEY = os.getenv("SHENZHOU_API_KEY", "")
 SHENZHOU_TIMEOUT = int(os.getenv("SHENZHOU_TIMEOUT", "60"))
 
 # ============================================================
-# 本地 LLM 配置（DeepSeek）
+# LLM 调用参数（API 地址 / Key / 模型名仅在管理端 llm_configs 配置）
 # ============================================================
-DEEPSEEK_API_KEY = os.getenv(
-    "DEEPSEEK_API_KEY",
-    "sk-4a9d6573f3cd4abea51967f572df307b"
-)
-# 主模型（用于复杂推理：总结、报告、图表、看板构建）
-LLM_MODEL_DEEPSEEK_PRIMARY = os.getenv("LLM_MODEL_DEEPSEEK_PRIMARY", "deepseek-v4-pro")
-# 备用模型（用于简单任务：关键词确认、子问题筛选）
-LLM_MODEL_DEEPSEEK_ALT = os.getenv("LLM_MODEL_DEEPSEEK_ALT", "deepseek-v4-flash")
-
-# DeepSeek OpenAI 兼容 API 地址
-DEEPSEEK_API_BASE = "https://api.deepseek.com"
-
-# 通用 LLM 配置（向后兼容，用于 BI 智能分类等）
-LLM_API_BASE = os.getenv("LLM_API_BASE", DEEPSEEK_API_BASE)
-LLM_API_KEY = os.getenv("LLM_API_KEY", DEEPSEEK_API_KEY)
-LLM_MODEL = os.getenv("LLM_MODEL", LLM_MODEL_DEEPSEEK_PRIMARY)
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))
 

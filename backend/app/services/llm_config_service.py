@@ -5,14 +5,6 @@ from sqlalchemy import text, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.llm_config import LLMConfig
-from app.config import (
-    LLM_API_BASE,
-    LLM_API_KEY,
-    LLM_MODEL,
-    LLM_MODEL_DEEPSEEK_PRIMARY,
-    LLM_MODEL_DEEPSEEK_ALT,
-)
-
 logger = logging.getLogger(__name__)
 
 
@@ -142,19 +134,12 @@ class LLMConfigService:
         return result.rowcount > 0
 
     async def ensure_default_config(self) -> None:
-        """如果没有配置，从环境变量创建一条默认配置"""
+        """检查是否存在 LLM 配置记录（不自动从环境变量写入，避免运行时兜底）。"""
         result = await self.db.execute(select(LLMConfig).limit(1))
         if result.scalar_one_or_none():
             return
-
-        logger.info("未找到 LLM 配置，从环境变量创建默认配置")
-        await self.create_config(
-            name="默认配置",
-            api_base=LLM_API_BASE,
-            api_key=LLM_API_KEY,
-            primary_model=LLM_MODEL or LLM_MODEL_DEEPSEEK_PRIMARY,
-            alt_model=LLM_MODEL_DEEPSEEK_ALT,
-            is_active=True,
+        logger.warning(
+            "数据库中尚无 LLM 配置，请在管理后台「LLM 配置」中创建并启用后再调用 AI 能力"
         )
 
     def _mask_key(self, key: str) -> str:

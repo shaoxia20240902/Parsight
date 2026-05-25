@@ -37,10 +37,17 @@ async def seed_llm_config():
         await service.ensure_default_config()
         active = await service.get_active_config()
         if active:
+            from app.services.llm_client import require_active_llm_config, get_alt_model
+
             set_llm_config(active)
-            print(f"LLM 配置已加载: {active['name']} ({active['primary_model']})")
+            require_active_llm_config()
+            alt = get_alt_model()
+            print(
+                f"LLM 配置已加载: {active['name']} | "
+                f"{active['api_base']} | 主模型 {active['primary_model']} | 备用 {alt}"
+            )
         else:
-            print("未找到活跃 LLM 配置")
+            print("警告: 未找到已启用的 LLM 配置，所有 AI 调用将失败直至在管理端启用一条配置")
 
 
 @asynccontextmanager

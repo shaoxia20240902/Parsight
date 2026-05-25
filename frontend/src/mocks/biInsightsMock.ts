@@ -8,7 +8,31 @@ export const BI_MAX_SHEET_CATEGORIES = 5
 export const BI_MAX_CUSTOM_CATEGORIES = 3
 export const BI_MAX_CATEGORIES_TOTAL = BI_MAX_SHEET_CATEGORIES + BI_MAX_CUSTOM_CATEGORIES
 
-export type BIChartType = 'kpi_group' | 'bar' | 'line' | 'pie' | 'combo' | 'ranking' | 'table' | 'detail_table' | 'kpi'
+export type BIChartType =
+  | 'kpi_group'
+  | 'kpi'
+  | 'bar'
+  | 'stacked_bar'
+  | 'horizontal_bar'
+  | 'line'
+  | 'multi_line'
+  | 'area'
+  | 'stacked_area'
+  | 'pie'
+  | 'donut'
+  | 'combo'
+  | 'ranking'
+  | 'table'
+  | 'detail_table'
+  | 'treemap'
+  | 'funnel'
+  | 'scatter'
+  | 'bubble'
+  | 'heatmap'
+  | 'radar'
+  | 'gauge'
+  | 'waterfall'
+  | 'map'
 export type BICategorySource = 'sheet' | 'custom'
 
 export interface BICategory {

@@ -99,7 +99,7 @@
             </label>
             <label class="form-field">
               <span class="field-label">备用模型</span>
-              <input v-model="dialog.form.alt_model" class="field-input" placeholder="可选" />
+              <input v-model="dialog.form.alt_model" class="field-input" placeholder="必填，可与主模型相同" />
             </label>
             <label class="form-field form-field--row">
               <input v-model="dialog.form.is_active" type="checkbox" />
@@ -214,8 +214,8 @@ function closeDialog() {
 }
 
 async function handleTest() {
-  if (!dialog.form.api_base || !dialog.form.api_key || !dialog.form.primary_model) {
-    ElMessage.warning('请填写 API 地址、Key 和主模型')
+  if (!dialog.form.api_base || !dialog.form.api_key || !dialog.form.primary_model || !dialog.form.alt_model?.trim()) {
+    ElMessage.warning('请填写 API 地址、Key、主模型和备用模型')
     return
   }
   testing.value = true
@@ -239,8 +239,8 @@ async function handleTest() {
 }
 
 async function handleSave() {
-  if (!dialog.form.name || !dialog.form.api_base || !dialog.form.api_key || !dialog.form.primary_model) {
-    ElMessage.warning('请填写必填项')
+  if (!dialog.form.name || !dialog.form.api_base || !dialog.form.api_key || !dialog.form.primary_model || !dialog.form.alt_model?.trim()) {
+    ElMessage.warning('请填写名称、API 地址、Key、主模型和备用模型')
     return
   }
   saving.value = true

@@ -42,16 +42,6 @@
               创建新空间
             </span>
           </el-dropdown-item>
-          <el-dropdown-item
-            v-if="currentSpace && spaces.length > 1"
-            command="__delete__"
-            class="space-menu-item space-menu-item--danger"
-          >
-            <span class="action-row">
-              <el-icon class="action-icon"><Delete /></el-icon>
-              删除当前空间
-            </span>
-          </el-dropdown-item>
         </el-dropdown-menu>
       </template>
     </el-dropdown>
@@ -85,9 +75,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, nextTick } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete } from '@element-plus/icons-vue'
+import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
+import { ElMessage } from 'element-plus'
+import { Plus } from '@element-plus/icons-vue'
 import * as spaceApi from '../api/space'
 import type { Space } from '../api/space'
 
@@ -157,24 +147,6 @@ async function handleCommand(command: string) {
     showCreate.value = true
     await nextTick()
     createFormRef.value?.resetFields()
-  } else if (command === '__delete__') {
-    if (!currentSpace.value) return
-    try {
-      await ElMessageBox.confirm(
-        `确定要删除空间「${currentSpace.value.name}」吗？该空间下的文件也将被删除。`,
-        '删除确认',
-        { confirmButtonText: '确定删除', cancelButtonText: '取消', type: 'warning' }
-      )
-      await spaceApi.deleteSpace(currentSpace.value.id)
-      ElMessage.success('空间已删除')
-      localStorage.removeItem(SPACE_KEY)
-      currentSpace.value = null
-      await loadSpaces()
-    } catch (e: any) {
-      if (e !== 'cancel') {
-        ElMessage.error('删除失败：' + (e.message || '未知错误'))
-      }
-    }
   } else {
     const target = spaces.value.find(s => s.id === command)
     if (target && target.id !== currentSpace.value?.id) {
@@ -219,7 +191,18 @@ async function handleCreate() {
   }
 }
 
-onMounted(loadSpaces)
+function onAdminSpacesChanged() {
+  loadSpaces()
+}
+
+onMounted(() => {
+  loadSpaces()
+  window.addEventListener('admin-spaces-changed', onAdminSpacesChanged)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('admin-spaces-changed', onAdminSpacesChanged)
+})
 
 defineExpose({ currentSpace, spaces, loadSpaces })
 </script>

@@ -3,6 +3,7 @@
     class="chart-card"
     :class="{
       'chart-card--collapsed': chart.collapsed,
+      'chart-card--expanded': chart.expanded,
       'chart-card--dragging': isDragging,
       'chart-card--chat-open': chatOpen
     }"
@@ -140,6 +141,7 @@
         v-if="!['table', 'detail_table'].includes(chart.chartType)"
         :chart="chart"
         :visible="true"
+        :expanded="Boolean(chart.expanded)"
         @update-kpi-items="(items) => $emit('update-kpi-items', chart.id, items)"
       />
       <BIMiniTablePreview v-else :preview="chart.tablePreview" :max-rows="6" layout="board" />
@@ -267,11 +269,16 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
 .chart-card {
   background: var(--bi-surface, #fff);
   border: 1px solid var(--bi-border, #E5E0D8);
-  border-radius: 14px;
+  border-radius: 8px;
   overflow: hidden;
-  transition: box-shadow 0.2s ease, opacity 0.15s ease;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, opacity 0.15s ease;
   height: fit-content;
   position: relative;
+  box-shadow: 0 1px 0 rgba(31, 26, 23, 0.03);
+}
+
+.chart-card--expanded {
+  box-shadow: 0 12px 34px rgba(58, 45, 34, 0.08);
 }
 
 .chart-card--chat-open {
@@ -284,15 +291,17 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
 }
 
 .chart-card:hover {
-  box-shadow: 0 2px 8px rgba(28, 25, 23, 0.06);
+  border-color: var(--bi-border-strong, #D8CEC2);
+  box-shadow: 0 10px 28px rgba(58, 45, 34, 0.08);
 }
 
 .chart-card__header {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 12px 14px;
+  padding: 13px 14px 12px;
   border-bottom: 1px solid transparent;
+  background: rgba(253, 251, 248, 0.78);
 }
 
 .chart-card--collapsed .chart-card__header {
@@ -312,7 +321,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   align-items: center;
   justify-content: center;
   border: 1px solid var(--bi-border);
-  border-radius: 8px;
+  border-radius: 7px;
   background: var(--bi-surface-muted, #FAF8F5);
   color: var(--bi-muted);
   cursor: grab;
@@ -344,18 +353,24 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   font-weight: 600;
   color: var(--bi-text);
   margin: 0 0 4px;
+  line-height: 1.35;
+  letter-spacing: 0;
 }
 
 .chart-card__question {
   font-size: 12px;
   color: var(--bi-muted);
-  line-height: 1.5;
+  line-height: 1.55;
   margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .chart-card__filter-hint {
   font-size: 11px;
-  color: #007AFF;
+  color: var(--bi-blue, #4E6D80);
   margin: 6px 0 0;
 }
 
@@ -377,7 +392,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   align-items: center;
   justify-content: center;
   border: 1px solid var(--bi-border);
-  border-radius: 8px;
+  border-radius: 7px;
   background: #fff;
   color: var(--bi-muted);
   cursor: pointer;
@@ -385,20 +400,32 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
 }
 
 .btn-icon:hover {
-  border-color: #D4CEC4;
+  border-color: var(--bi-border-strong, #D4CEC4);
   color: var(--bi-text);
+  background: var(--bi-surface-muted, #FAF8F5);
+}
+
+.chart-card__drag:focus-visible,
+.chart-card__collapse:focus-visible,
+.btn-icon:focus-visible,
+.chat-dialog__close:focus-visible,
+.chat-dialog__send:focus-visible,
+.bubble-btn:focus-visible,
+.filter-panel__clear:focus-visible {
+  outline: 2px solid rgba(198, 97, 63, 0.36);
+  outline-offset: 2px;
 }
 
 .btn-icon--filter.btn-icon--filter-applied {
-  color: #007AFF;
-  border-color: rgba(0, 122, 255, 0.4);
-  background: rgba(0, 122, 255, 0.1);
+  color: var(--bi-blue, #4E6D80);
+  border-color: rgba(78, 109, 128, 0.35);
+  background: rgba(78, 109, 128, 0.1);
 }
 
 .btn-icon--filter.btn-icon--filter-applied:hover {
-  color: #0062CC;
-  border-color: rgba(0, 122, 255, 0.55);
-  background: rgba(0, 122, 255, 0.14);
+  color: #3B5C70;
+  border-color: rgba(78, 109, 128, 0.5);
+  background: rgba(78, 109, 128, 0.14);
 }
 
 .btn-icon--filter.btn-icon--filter-open:not(.btn-icon--filter-applied) {
@@ -408,20 +435,20 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
 }
 
 .btn-icon--filter.btn-icon--filter-applied.btn-icon--filter-open {
-  box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.18);
+  box-shadow: 0 0 0 2px rgba(78, 109, 128, 0.14);
 }
 
 .btn-icon--chat {
-  color: #3D9A6A;
-  border-color: rgba(61, 154, 106, 0.35);
-  background: rgba(52, 199, 89, 0.08);
+  color: var(--bi-green, #4D7B62);
+  border-color: rgba(77, 123, 98, 0.32);
+  background: rgba(77, 123, 98, 0.08);
 }
 
 .btn-icon--chat:hover,
 .btn-icon--chat-active {
-  background: rgba(52, 199, 89, 0.14);
-  color: #2D8A5E;
-  border-color: rgba(61, 154, 106, 0.5);
+  background: rgba(77, 123, 98, 0.14);
+  color: #3F6A52;
+  border-color: rgba(77, 123, 98, 0.48);
 }
 
 .chat-dialog {
@@ -433,8 +460,8 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   padding: 14px;
   background: #fff;
   border: 1px solid rgba(52, 199, 89, 0.35);
-  border-radius: 14px;
-  box-shadow: 0 12px 32px rgba(28, 25, 23, 0.12);
+  border-radius: 8px;
+  box-shadow: 0 14px 34px rgba(58, 45, 34, 0.14);
 }
 
 .chat-dialog__header {
@@ -459,7 +486,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   border: none;
   background: transparent;
   color: var(--bi-muted);
-  border-radius: 6px;
+  border-radius: 7px;
   cursor: pointer;
 }
 
@@ -485,7 +512,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   color: var(--bi-text);
   background: #FAF8F5;
   border: 1px solid var(--bi-border);
-  border-radius: 10px;
+  border-radius: 8px;
   resize: vertical;
   min-height: 72px;
   outline: none;
@@ -517,7 +544,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   color: #fff;
   background: #3D9A6A;
   border: none;
-  border-radius: 10px;
+  border-radius: 8px;
   cursor: pointer;
   transition: background 0.15s ease, opacity 0.15s ease;
 }
@@ -544,8 +571,8 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   color: var(--bi-text);
   background: #fff;
   border: 1px solid var(--bi-border);
-  border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(28, 25, 23, 0.1);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(58, 45, 34, 0.12);
 }
 
 .action-bubble--confirm p {
@@ -565,7 +592,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   font-size: 12px;
   font-family: inherit;
   border: 1px solid var(--bi-border);
-  border-radius: 8px;
+  border-radius: 7px;
   background: #fff;
   cursor: pointer;
 }
@@ -585,8 +612,8 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   padding: 12px;
   background: #fff;
   border: 1px solid var(--bi-border);
-  border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(28, 25, 23, 0.1);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(58, 45, 34, 0.12);
 }
 
 .filter-panel__title {
@@ -628,8 +655,25 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
 }
 
 .chart-card__body {
-  padding: 12px 16px 16px;
+  padding: 14px 16px 16px;
   min-width: 0;
+  background: #fff;
+  transition: padding 0.18s ease;
+}
+
+.chart-card--expanded .chart-card__body {
+  padding: 18px 22px 22px;
+}
+
+@media (max-width: 720px) {
+  .chart-card__header {
+    flex-wrap: wrap;
+  }
+
+  .chart-card__actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
 }
 
 .kpi-block {

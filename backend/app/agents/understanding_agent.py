@@ -7,7 +7,7 @@ import json
 import logging
 from typing import Any, Dict, List
 
-from app.config import AGENT_MAX_RETRIES, LLM_MODEL_DEEPSEEK_PRIMARY
+from app.config import AGENT_MAX_RETRIES
 from app.services.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -154,6 +154,55 @@ class TableUnderstandingAgent:
         content = await self._chat_with_retry(messages)
         return self._strip_code_fence(content)
 
+    async def run_stream(self, input_data: Dict[str, Any]):
+        """流式生成表六维理解，逐块 yield content"""
+        sheet_name = input_data.get("sheet_name", "未命名表")
+        table_name = input_data.get("table_name", sheet_name)
+        columns = input_data.get("columns", [])
+        sample_rows = input_data.get("sample_rows", [])
+        row_count = input_data.get("row_count", 0)
+        first_n_count = input_data.get("first_n_count", 10)
+        random_n_count = input_data.get("random_n_count", 0)
+
+        col_lines = []
+        for col in columns:
+            samples = col.get("sample_values", [])[:5]
+            col_lines.append(
+                f"- {col['name']}（类型={col.get('type', 'text')}，"
+                f"唯一值数={col.get('unique_count', '?')}，样本值={samples}）"
+            )
+
+        sample_preview = sample_rows[:100]
+        user_msg = f"""请对以下数据表进行六维深度理解分析。
+
+## 表基本信息
+- 业务表名（Sheet）：{sheet_name}
+- 数据库表名：{table_name}
+- 总行数：{row_count}
+- 字段数：{len(columns)}
+
+## 字段列表（含样本值）
+{chr(10).join(col_lines)}
+
+## 采样数据说明
+以下共 {len(sample_preview)} 行：前 {first_n_count} 行为顺序采样，其余为随机采样（共 {random_n_count} 行随机样本）。
+
+## 采样数据
+{json.dumps(sample_preview, ensure_ascii=False, indent=2, default=str)}"""
+
+        messages = [
+            {"role": "system", "content": UNDERSTANDING_SYSTEM_PROMPT},
+            {"role": "user", "content": user_msg},
+        ]
+
+        async for chunk in self.llm.chat_completion_stream(
+            messages=messages,
+            temperature=0.4,
+            max_tokens=4096,
+            timeout=300.0,
+        ):
+            yield chunk
+
     async def extract_disputed_fields(
         self,
         understanding_content: str,
@@ -240,7 +289,7 @@ class TableUnderstandingAgent:
             {"role": "system", "content": REGENERATE_WITH_VERIFICATION_PROMPT},
             {"role": "user", "content": user_msg},
         ]
-        content = await self._chat_with_retry(messages, max_tokens=4096, timeout=120.0)
+        content = await self._chat_with_retry(messages, max_tokens=4096, timeout=300.0)
         return self._strip_code_fence(content)
 
     async def _chat_json_with_retry(
@@ -257,8 +306,7 @@ class TableUnderstandingAgent:
                     messages=messages,
                     temperature=0.2,
                     max_tokens=2048,
-                    timeout=60.0,
-                    model_override=LLM_MODEL_DEEPSEEK_PRIMARY,
+                    timeout=120.0,
                 )
             except Exception as e:
                 last_error = e
@@ -279,7 +327,7 @@ class TableUnderstandingAgent:
         messages: List[Dict[str, str]],
         max_retries: int = None,
         max_tokens: int = 4096,
-        timeout: float = 90.0,
+        timeout: float = 180.0,
     ) -> str:
         if max_retries is None:
             max_retries = AGENT_MAX_RETRIES
@@ -291,7 +339,6 @@ class TableUnderstandingAgent:
                     temperature=0.4,
                     max_tokens=max_tokens,
                     timeout=timeout,
-                    model_override=LLM_MODEL_DEEPSEEK_PRIMARY,
                 )
             except Exception as e:
                 last_error = e

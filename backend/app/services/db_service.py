@@ -403,10 +403,32 @@ class DBService:
 
     async def update_bi_status(self, file_id: str, status: str) -> None:
         """更新 BI 生成状态"""
-        await self.db.execute(
-            text("UPDATE file_records SET bi_status = :status WHERE id = :id"),
-            {"id": file_id, "status": status},
-        )
+        if status == "generating":
+            await self.db.execute(
+                text("""
+                    UPDATE file_records
+                    SET bi_status = :status,
+                        bi_generation_started_at = :started_at,
+                        bi_generation_finished_at = NULL
+                    WHERE id = :id
+                """),
+                {"id": file_id, "status": status, "started_at": datetime.utcnow()},
+            )
+        elif status in {"completed", "failed"}:
+            await self.db.execute(
+                text("""
+                    UPDATE file_records
+                    SET bi_status = :status,
+                        bi_generation_finished_at = :finished_at
+                    WHERE id = :id
+                """),
+                {"id": file_id, "status": status, "finished_at": datetime.utcnow()},
+            )
+        else:
+            await self.db.execute(
+                text("UPDATE file_records SET bi_status = :status WHERE id = :id"),
+                {"id": file_id, "status": status},
+            )
         await self.db.commit()
 
     async def get_bi_status(self, file_id: str) -> Optional[str]:
@@ -417,6 +439,43 @@ class DBService:
         )
         row = result.first()
         return row._mapping.get("bi_status") if row else None
+
+    async def get_bi_status_info(self, file_id: str) -> Dict[str, Any]:
+        """获取 BI 生成状态与任务时间。"""
+        result = await self.db.execute(
+            text("""
+                SELECT bi_status, bi_generation_started_at, bi_generation_finished_at
+                FROM file_records
+                WHERE id = :id
+            """),
+            {"id": file_id},
+        )
+        row = result.first()
+        if not row:
+            return {}
+        data = dict(row._mapping)
+        return {
+            "status": data.get("bi_status"),
+            "generation_started_at": data.get("bi_generation_started_at"),
+            "generation_finished_at": data.get("bi_generation_finished_at"),
+        }
+
+    async def ensure_bi_generation_started_at(self, file_id: str) -> Optional[datetime]:
+        """为旧的 generating 任务补齐开始时间，只在缺失时写一次。"""
+        started_at = datetime.utcnow()
+        await self.db.execute(
+            text("""
+                UPDATE file_records
+                SET bi_generation_started_at = :started_at
+                WHERE id = :id
+                  AND bi_status = 'generating'
+                  AND bi_generation_started_at IS NULL
+            """),
+            {"id": file_id, "started_at": started_at},
+        )
+        await self.db.commit()
+        info = await self.get_bi_status_info(file_id)
+        return info.get("generation_started_at")
 
     async def save_recommended_questions(
         self, file_id: str, questions: Dict[str, Any], status: str = "completed"

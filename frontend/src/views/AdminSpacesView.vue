@@ -199,6 +199,7 @@ async function handleSave() {
     }
     closeDialog()
     await loadSpaces()
+    window.dispatchEvent(new CustomEvent('admin-spaces-changed'))
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || '保存失败')
   } finally {
@@ -220,6 +221,7 @@ async function handleDelete(s: AdminSpace) {
     await deleteSpace(s.id)
     ElMessage.success('空间已删除')
     await loadSpaces()
+    window.dispatchEvent(new CustomEvent('admin-spaces-changed'))
   } catch (e: any) {
     ElMessage.error(e.response?.data?.detail || '删除失败')
   }

@@ -17,12 +17,8 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from app.agents.base import BaseAgent
-from app.services.llm_client import LLMClient
-from app.config import (
-    LLM_MODEL_DEEPSEEK_PRIMARY,
-    LLM_MODEL_DEEPSEEK_ALT,
-    AGENT_MAX_RETRIES,
-)
+from app.services.llm_client import LLMClient, get_primary_model, get_alt_model
+from app.config import AGENT_MAX_RETRIES
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +68,7 @@ async def _call_llm_with_retry(
     if max_retries is None:
         max_retries = AGENT_MAX_RETRIES
 
-    model = model or LLM_MODEL_DEEPSEEK_PRIMARY
+    model = model or get_primary_model()
     last_error = None
 
     for attempt in range(max_retries + 1):
@@ -88,6 +84,12 @@ async def _call_llm_with_retry(
         except Exception as e:
             last_error = e
             logger.warning(f"LLM call attempt {attempt + 1}/{max_retries + 1} failed: {e}")
+            msg = str(e)
+            if any(
+                token in msg
+                for token in ("HTTP 401", "HTTP 402", "HTTP 403", "余额不足", "未授权", "访问被拒绝")
+            ):
+                raise
             if attempt < max_retries:
                 await asyncio.sleep(1.0 * (attempt + 1))
 
@@ -164,10 +166,10 @@ class LocalSheetSummaryAgent(BaseAgent):
 
         result = await _call_llm_with_retry(
             self.llm, messages,
-            model=LLM_MODEL_DEEPSEEK_PRIMARY,
+            model=get_primary_model(),
             temperature=0.3,
             max_tokens=2048,
-            timeout=20.0,
+            timeout=120.0,
         )
         result.setdefault("sheet_name", sheet_name)
         result.setdefault("notable_patterns", [])
@@ -233,10 +235,10 @@ Sheet 总结:
 
         result = await _call_llm_with_retry(
             self.llm, messages,
-            model=LLM_MODEL_DEEPSEEK_ALT,
+            model=get_alt_model(),
             temperature=0.2,
             max_tokens=2048,
-            timeout=15.0,
+            timeout=60.0,
         )
         result.setdefault("match_type", "exact")
         result.setdefault("extracted_keywords", [])
@@ -348,10 +350,10 @@ class LocalRoleDecompositionAgent(BaseAgent):
 
         result = await _call_llm_with_retry(
             self.llm, messages,
-            model=LLM_MODEL_DEEPSEEK_PRIMARY,
+            model=get_primary_model(),
             temperature=0.5,
             max_tokens=2048,
-            timeout=20.0,
+            timeout=60.0,
         )
         result.setdefault("role", self.role)
         result.setdefault("perspective", "")
@@ -429,10 +431,10 @@ class LocalSubQuestionSelectorAgent(BaseAgent):
 
         result = await _call_llm_with_retry(
             self.llm, messages,
-            model=LLM_MODEL_DEEPSEEK_ALT,
+            model=get_alt_model(),
             temperature=0.3,
             max_tokens=3072,
-            timeout=20.0,
+            timeout=60.0,
         )
         result.setdefault("selected_questions", [])
         result.setdefault("coverage_check", {})
@@ -534,10 +536,10 @@ class LocalSQLGeneratorAgent(BaseAgent):
 
         result = await _call_llm_with_retry(
             self.llm, messages,
-            model=LLM_MODEL_DEEPSEEK_PRIMARY,
+            model=get_primary_model(),
             temperature=0.2,
             max_tokens=4096,
-            timeout=30.0,
+            timeout=60.0,
         )
         result.setdefault("queries", [])
         return result
@@ -614,10 +616,10 @@ class LocalChartGeneratorAgent(BaseAgent):
 
         result = await _call_llm_with_retry(
             self.llm, messages,
-            model=LLM_MODEL_DEEPSEEK_ALT,
+            model=get_alt_model(),
             temperature=0.3,
             max_tokens=4096,
-            timeout=20.0,
+            timeout=60.0,
         )
         result.setdefault("chart_type", "bar")
         result.setdefault("title", question)
@@ -703,10 +705,10 @@ class LocalReportGeneratorAgent(BaseAgent):
 
         result = await _call_llm_with_retry(
             self.llm, messages,
-            model=LLM_MODEL_DEEPSEEK_PRIMARY,
+            model=get_primary_model(),
             temperature=0.4,
             max_tokens=4096,
-            timeout=30.0,
+            timeout=60.0,
         )
         result.setdefault("report", {})
         return result
@@ -799,10 +801,10 @@ class LocalQuickQAAgent(BaseAgent):
 
         result = await _call_llm_with_retry(
             self.llm, messages,
-            model=LLM_MODEL_DEEPSEEK_PRIMARY,
+            model=get_primary_model(),
             temperature=0.3,
             max_tokens=2048,
-            timeout=20.0,
+            timeout=60.0,
         )
         result.setdefault("type", "answer")
         result.setdefault("answer", "")

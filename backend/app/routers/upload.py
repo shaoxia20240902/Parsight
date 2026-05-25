@@ -407,8 +407,15 @@ async def list_files(
 ):
     """获取文件列表（可按空间过滤）"""
     query = select(FileRecord).options(
-        load_only(FileRecord.id, FileRecord.filename, FileRecord.upload_time,
-                  FileRecord.sheet_count, FileRecord.status, FileRecord.space_id)
+        load_only(
+            FileRecord.id,
+            FileRecord.filename,
+            FileRecord.upload_time,
+            FileRecord.sheet_count,
+            FileRecord.status,
+            FileRecord.space_id,
+            FileRecord.recommended_questions_status,
+        )
     ).order_by(FileRecord.upload_time.desc())
     if space_id:
         query = query.where(FileRecord.space_id == space_id)
@@ -423,7 +430,8 @@ async def list_files(
                 "upload_time": f.upload_time.isoformat() if f.upload_time else "",
                 "sheet_count": f.sheet_count,
                 "status": f.status,
-                "space_id": f.space_id
+                "space_id": f.space_id,
+                "recommended_questions_status": f.recommended_questions_status or "idle",
             }
             for f in files
         ]

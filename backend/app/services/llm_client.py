@@ -13,10 +13,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
-from app.config import LLM_API_BASE, LLM_API_KEY, LLM_MODEL, LLM_MAX_TOKENS, LLM_TEMPERATURE
+from app.config import LLM_MAX_TOKENS, LLM_TEMPERATURE
 
-# 全局动态配置（由管理端热更新）
+# 全局动态配置（仅管理端启用项，启动或 activate 时注入）
 _dynamic_config: Optional[Dict[str, Any]] = None
+
+_MISSING_ACTIVE_LLM_MSG = (
+    "未加载管理端 LLM 配置：请在管理后台创建并「启用」一条 LLM 配置后重启服务"
+)
 
 
 def set_llm_config(config: Optional[Dict[str, Any]]) -> None:
@@ -29,7 +33,59 @@ def get_llm_config() -> Optional[Dict[str, Any]]:
     """获取当前全局 LLM 动态配置"""
     return _dynamic_config
 
+
+def require_active_llm_config() -> Dict[str, Any]:
+    """返回当前启用的管理端 LLM 配置；无配置时直接失败，不回退 .env。"""
+    dyn = get_llm_config()
+    if not dyn:
+        raise RuntimeError(_MISSING_ACTIVE_LLM_MSG)
+    api_base = (dyn.get("api_base") or "").strip()
+    api_key = (dyn.get("api_key") or "").strip()
+    primary_model = (dyn.get("primary_model") or "").strip()
+    if not api_base:
+        raise RuntimeError("管理端 LLM 配置缺少 api_base")
+    if not api_key:
+        raise RuntimeError("管理端 LLM 配置缺少 api_key")
+    if not primary_model:
+        raise RuntimeError("管理端 LLM 配置缺少 primary_model")
+    return dyn
+
+
+def get_primary_model() -> str:
+    return (require_active_llm_config().get("primary_model") or "").strip()
+
+
+def get_alt_model() -> str:
+    alt = (require_active_llm_config().get("alt_model") or "").strip()
+    if not alt:
+        raise RuntimeError("管理端 LLM 配置缺少 alt_model，请在管理后台补全备用模型")
+    return alt
+
+
 logger = logging.getLogger(__name__)
+
+
+def runtime_error_from_http_status(
+    error: httpx.HTTPStatusError,
+    *,
+    context: str = "调用",
+) -> RuntimeError:
+    """将上游 LLM HTTP 错误转为可展示的运行时异常（不做静默兜底）。"""
+    status = error.response.status_code
+    if status == 402:
+        return RuntimeError(
+            "LLM API 账户余额不足（HTTP 402），请在模型服务商处充值后重试"
+        )
+    if status == 401:
+        return RuntimeError(
+            "LLM API Key 无效或未授权（HTTP 401），请检查管理后台 LLM 配置"
+        )
+    if status == 403:
+        return RuntimeError("LLM API 访问被拒绝（HTTP 403），请检查 Key 与模型权限")
+    if status == 429:
+        return RuntimeError("LLM API 请求过于频繁（HTTP 429），请稍后重试")
+    return RuntimeError(f"LLM API {context}失败: HTTP {status}")
+
 
 # ─────────────────────────────────────────────
 #  AI 调用专用日志
@@ -134,29 +190,36 @@ def _log_ai_call(
     ai_log.info("\n".join(lines))
 
 
+# 全局共享 httpx 客户端（减少连接池碎片，增加并发能力）
+_http_client_instance: httpx.AsyncClient | None = None
+
+
+def _get_global_http_client() -> httpx.AsyncClient:
+    global _http_client_instance
+    if _http_client_instance is None or _http_client_instance.is_closed:
+        # 不设置客户端级超时，让每个请求自行控制（避免 client timeout 与 request timeout 冲突）
+        _http_client_instance = httpx.AsyncClient(
+            limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
+        )
+    return _http_client_instance
+
+
 class LLMClient:
-    """OpenAI 兼容的 LLM 客户端"""
+    """OpenAI 兼容的 LLM 客户端（仅使用管理端已启用的配置）"""
 
     def __init__(self):
-        # 优先使用动态配置
-        dyn = get_llm_config()
-        self.api_base = (dyn.get("api_base") if dyn else LLM_API_BASE).rstrip("/")
-        self.api_key = dyn.get("api_key") if dyn else LLM_API_KEY
-        self.model = dyn.get("primary_model") if dyn else LLM_MODEL
+        # 不在构造时读取配置：路由模块导入早于 lifespan 加载 llm_configs
         self.max_tokens = LLM_MAX_TOKENS
         self.temperature = LLM_TEMPERATURE
-        self._client: Optional[httpx.AsyncClient] = None
 
-    def _require_api_key(self) -> None:
-        if not self.api_key:
-            raise RuntimeError("LLM_API_KEY 未配置，无法调用大模型")
-
-    def _http_client(self) -> httpx.AsyncClient:
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
-            )
-        return self._client
+    def _resolve_runtime(self) -> tuple[str, str, str]:
+        """每次调用前解析当前启用的管理端配置（支持热更新）。"""
+        dyn = require_active_llm_config()
+        return (
+            dyn["api_base"].rstrip("/"),
+            dyn["api_key"],
+            dyn["primary_model"],
+        )
 
     async def chat_completion(
         self,
@@ -179,10 +242,9 @@ class LLMClient:
         Returns:
             模型回复的文本内容
         """
-        self._require_api_key()
-
-        url = f"{self.api_base}/chat/completions"
-        model = model_override or self.model
+        api_base, api_key, primary_model = self._resolve_runtime()
+        url = f"{api_base}/chat/completions"
+        model = model_override or primary_model
         temp_val = temperature if temperature is not None else self.temperature
         tokens_val = max_tokens if max_tokens is not None else self.max_tokens
 
@@ -194,11 +256,11 @@ class LLMClient:
         }
 
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
 
-        client = self._http_client()
+        client = _get_global_http_client()
         try:
             response = await client.post(url, json=payload, headers=headers, timeout=httpx.Timeout(timeout))
             response.raise_for_status()
@@ -210,12 +272,78 @@ class LLMClient:
             _log_ai_call("chat_completion", model, messages, temp_val, tokens_val, None,
                          error=f"HTTP {e.response.status_code}: {e.response.text[:500]}")
             logger.error(f"LLM API HTTP error: {e.response.status_code} - {e.response.text}")
-            raise RuntimeError(f"LLM API 调用失败: HTTP {e.response.status_code}")
+            raise runtime_error_from_http_status(e, context="调用") from e
         except httpx.RequestError as e:
+            err_detail = f"{type(e).__name__}: {e}"
+            if e.__cause__:
+                err_detail += f" (caused by {type(e.__cause__).__name__}: {e.__cause__})"
             _log_ai_call("chat_completion", model, messages, temp_val, tokens_val, None,
-                         error=f"网络错误: {e}")
-            logger.error(f"LLM API 网络错误: {e}")
-            raise RuntimeError(f"LLM API 网络错误: {e}")
+                         error=f"网络错误: {err_detail}")
+            logger.error(f"LLM API 网络错误: {err_detail}")
+            raise RuntimeError(f"LLM API 网络错误: {err_detail}")
+
+    async def chat_completion_stream(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        timeout: float = 300.0,
+        model_override: Optional[str] = None,
+    ):
+        """
+        发送流式聊天请求，逐块 yield 文本内容
+
+        Yields:
+            每个 delta content 片段（可能为空字符串）
+        """
+        api_base, api_key, primary_model = self._resolve_runtime()
+        url = f"{api_base}/chat/completions"
+        model = model_override or primary_model
+        temp_val = temperature if temperature is not None else self.temperature
+        tokens_val = max_tokens if max_tokens is not None else self.max_tokens
+
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temp_val,
+            "max_tokens": tokens_val,
+            "stream": True,
+        }
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        client = _get_global_http_client()
+        try:
+            async with client.stream(
+                "POST", url, json=payload, headers=headers, timeout=httpx.Timeout(timeout)
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.strip() or line.startswith(":"):
+                        continue
+                    if line == "data: [DONE]":
+                        return
+                    if line.startswith("data: "):
+                        try:
+                            data = json.loads(line[6:])
+                            delta = data.get("choices", [{}])[0].get("delta", {})
+                            content = delta.get("content", "")
+                            if content is not None:
+                                yield content
+                        except (json.JSONDecodeError, IndexError, KeyError):
+                            continue
+        except httpx.HTTPStatusError as e:
+            logger.error(f"LLM Stream HTTP error: {e.response.status_code} - {e.response.text[:500]}")
+            raise runtime_error_from_http_status(e, context="流式调用") from e
+        except httpx.RequestError as e:
+            err_detail = f"{type(e).__name__}: {e}"
+            if e.__cause__:
+                err_detail += f" (caused by {type(e.__cause__).__name__}: {e.__cause__})"
+            logger.error(f"LLM Stream 网络错误: {err_detail}")
+            raise RuntimeError(f"LLM API 网络错误: {err_detail}")
 
     async def chat_completion_json(
         self,
@@ -231,10 +359,9 @@ class LLMClient:
         优先使用 response_format 强制 JSON 输出，
         如果 API 不支持则从文本中提取 JSON
         """
-        self._require_api_key()
-
-        url = f"{self.api_base}/chat/completions"
-        model = model_override or self.model
+        api_base, api_key, primary_model = self._resolve_runtime()
+        url = f"{api_base}/chat/completions"
+        model = model_override or primary_model
         temp_val = temperature if temperature is not None else self.temperature
         tokens_val = max_tokens if max_tokens is not None else self.max_tokens
         json_messages = self._ensure_json_instruction(messages)
@@ -248,11 +375,11 @@ class LLMClient:
         }
 
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
 
-        client = self._http_client()
+        client = _get_global_http_client()
         data = None
         try:
             response = await client.post(url, json=payload, headers=headers, timeout=httpx.Timeout(timeout))
@@ -276,12 +403,15 @@ class LLMClient:
             _log_ai_call("chat_completion_json", model, json_messages, temp_val, tokens_val, None,
                          error=f"HTTP {e.response.status_code}: {e.response.text[:500]}")
             logger.error(f"LLM API HTTP error: {e.response.status_code} - {e.response.text[:500]}")
-            raise RuntimeError(f"LLM API JSON 调用失败: HTTP {e.response.status_code}")
+            raise runtime_error_from_http_status(e, context="JSON 调用") from e
         except httpx.RequestError as e:
+            err_detail = f"{type(e).__name__}: {e}"
+            if e.__cause__:
+                err_detail += f" (caused by {type(e.__cause__).__name__}: {e.__cause__})"
             _log_ai_call("chat_completion_json", model, json_messages, temp_val, tokens_val, None,
-                         error=f"网络错误: {e}")
-            logger.error(f"LLM API 网络错误: {e}")
-            raise RuntimeError(f"LLM API 网络错误: {e}")
+                         error=f"网络错误: {err_detail}")
+            logger.error(f"LLM API 网络错误: {err_detail}")
+            raise RuntimeError(f"LLM API 网络错误: {err_detail}")
 
     def _ensure_json_instruction(self, messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
         """Some OpenAI-compatible APIs require the literal word 'json' when response_format=json_object."""

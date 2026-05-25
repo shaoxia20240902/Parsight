@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import traceback
+from datetime import datetime
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
@@ -36,6 +37,14 @@ router = APIRouter(prefix="/api/bi", tags=["bi"])
 # 全局 BI 智能体实例
 bi_agent = BIClassificationAgent()
 _generation_locks: Dict[str, asyncio.Lock] = {}
+
+
+def _utc_iso(value: Any) -> Optional[str]:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat(timespec="seconds") + "Z"
+    return str(value)
 
 
 class ChartDataRequest(BaseModel):
@@ -102,10 +111,11 @@ async def generate_bi_config(file_id: str, db: AsyncSession = Depends(get_db)):
 
     await lock.acquire()
     await db_service.update_bi_status(file_id, "generating")
+    status_info = await db_service.get_bi_status_info(file_id)
 
     async def event_generator():
         try:
-            async for event in _generate_bi_events(file_id, file_record, sheet_metas):
+            async for event in _generate_bi_events(file_id, file_record, sheet_metas, status_info):
                 yield event
         finally:
             lock.release()
@@ -121,15 +131,24 @@ async def generate_bi_config(file_id: str, db: AsyncSession = Depends(get_db)):
     )
 
 
-async def _generate_bi_events(file_id: str, file_record: Any, sheet_metas: List[Any]):
+async def _generate_bi_events(
+    file_id: str,
+    file_record: Any,
+    sheet_metas: List[Any],
+    status_info: Optional[Dict[str, Any]] = None,
+):
     async with async_session() as event_db:
         db_service = DBService(event_db)
         try:
             await db_service.clear_bi_thinking_journal(file_id)
-            yield f"data: {json.dumps({'step': 'bi_start', 'status': 'processing'}, ensure_ascii=False, default=_json_default)}\n\n"
+            generation_started_at = (status_info or {}).get("generation_started_at")
+            yield f"data: {json.dumps({'step': 'bi_start', 'status': 'processing', 'message': '正在准备 BI 生成任务', 'generation_started_at': _utc_iso(generation_started_at), 'server_time': _utc_iso(datetime.utcnow())}, ensure_ascii=False, default=_json_default)}\n\n"
             persist_lock = asyncio.Lock()
+            insight_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
 
             async def persist_thinking_entry(entry: Dict[str, Any]) -> None:
+                safe_entry = json_safe(entry)
+                await insight_queue.put(safe_entry)
                 async with persist_lock:
                     async with async_session() as persist_db:
                         await DBService(persist_db).append_bi_thinking_entry(file_id, entry)
@@ -176,14 +195,50 @@ async def _generate_bi_events(file_id: str, file_record: Any, sheet_metas: List[
                     "time_range": meta.time_range or "未知",
                 })
 
-            yield f"data: {json.dumps({'step': 'bi_generating', 'status': 'processing'}, ensure_ascii=False, default=_json_default)}\n\n"
+            yield f"data: {json.dumps({'step': 'bi_generating', 'status': 'processing', 'message': '已读取表结构，开始生成看板方案', 'generation_started_at': _utc_iso(generation_started_at), 'server_time': _utc_iso(datetime.utcnow())}, ensure_ascii=False, default=_json_default)}\n\n"
 
-            try:
-                bi_config = await BIBusinessGenerator(db_service).generate(
+            progress_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
+
+            async def emit_progress(event: Dict[str, Any]) -> None:
+                await progress_queue.put(json_safe(event))
+
+            generation_task = asyncio.create_task(
+                BIBusinessGenerator(db_service).generate(
                     file_id,
                     sheets_data,
                     on_thinking_entry=persist_thinking_entry,
+                    on_progress_event=emit_progress,
                 )
+            )
+
+            try:
+                while not generation_task.done():
+                    # 优先处理进度事件
+                    try:
+                        event = await asyncio.wait_for(progress_queue.get(), timeout=0.15)
+                        yield f"data: {json.dumps(event, ensure_ascii=False, default=_json_default)}\n\n"
+                        continue
+                    except asyncio.TimeoutError:
+                        pass
+
+                    # 处理 thinking insights（实时推送）
+                    try:
+                        entry = await asyncio.wait_for(insight_queue.get(), timeout=0.15)
+                        yield f"data: {json.dumps({'step': 'thinking_entry', 'status': 'processing', 'entry': entry}, ensure_ascii=False, default=_json_default)}\n\n"
+                        continue
+                    except asyncio.TimeoutError:
+                        pass
+
+                # 任务完成后，消费剩余队列
+                while not progress_queue.empty():
+                    event = progress_queue.get_nowait()
+                    yield f"data: {json.dumps(event, ensure_ascii=False, default=_json_default)}\n\n"
+
+                while not insight_queue.empty():
+                    entry = insight_queue.get_nowait()
+                    yield f"data: {json.dumps({'step': 'thinking_entry', 'status': 'processing', 'entry': entry}, ensure_ascii=False, default=_json_default)}\n\n"
+
+                bi_config = await generation_task
             except UnderstandingNotReadyError as e:
                 yield f"data: {json.dumps({'step': 'error', 'status': 'error', 'message': '表理解尚未完成', **understanding_gate_http_detail(e.pending_sheets)}, ensure_ascii=False, default=_json_default)}\n\n"
                 return
@@ -254,8 +309,14 @@ async def get_bi_status(file_id: str, db: AsyncSession = Depends(get_db)):
     if not file_record:
         raise HTTPException(status_code=404, detail="文件不存在")
 
-    bi_status = await db_service.get_bi_status(file_id)
+    bi_status_info = await db_service.get_bi_status_info(file_id)
+    bi_status = bi_status_info.get("status")
     bi_config = await db_service.get_bi_config(file_id)
+    timing = {
+        "generation_started_at": _utc_iso(bi_status_info.get("generation_started_at")),
+        "generation_finished_at": _utc_iso(bi_status_info.get("generation_finished_at")),
+        "server_time": _utc_iso(datetime.utcnow()),
+    }
 
     # 有配置且状态已完成
     if bi_config and bi_status == "completed":
@@ -265,15 +326,25 @@ async def get_bi_status(file_id: str, db: AsyncSession = Depends(get_db)):
                 "status": "completed",
                 "categories_count": len(bi_config.get("categories", [])),
                 "charts_count": len(bi_config.get("charts", [])),
+                **timing,
             },
         }
 
     # 正在生成中
     if bi_status == "generating":
+        if not bi_status_info.get("generation_started_at"):
+            await db_service.ensure_bi_generation_started_at(file_id)
+            bi_status_info = await db_service.get_bi_status_info(file_id)
+            timing = {
+                "generation_started_at": _utc_iso(bi_status_info.get("generation_started_at")),
+                "generation_finished_at": _utc_iso(bi_status_info.get("generation_finished_at")),
+                "server_time": _utc_iso(datetime.utcnow()),
+            }
         return {
             "code": 200,
             "data": {
                 "status": "generating",
+                **timing,
             },
         }
 
@@ -283,6 +354,7 @@ async def get_bi_status(file_id: str, db: AsyncSession = Depends(get_db)):
             "code": 200,
             "data": {
                 "status": "failed",
+                **timing,
             },
         }
 

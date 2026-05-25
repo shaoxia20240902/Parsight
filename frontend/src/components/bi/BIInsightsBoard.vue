@@ -67,7 +67,7 @@
             }"
             :title="cat.source === 'custom' ? `${cat.name}（双击编辑名称）` : cat.name"
             @click="activeCategoryId = cat.id"
-            @dblclick="cat.source === 'custom' && handleRenameCategory(cat)"
+            @dblclick="cat.source === 'custom' && !demoMode && handleRenameCategory(cat)"
           >
             <span
               class="tab-float-tag"
@@ -76,7 +76,7 @@
               {{ cat.source === 'sheet' ? 'Sheet' : '自定义' }}
             </span>
             <span
-              v-if="cat.source === 'custom'"
+              v-if="cat.source === 'custom' && !demoMode"
               class="tab-float-delete"
               role="button"
               tabindex="0"
@@ -162,6 +162,7 @@
       :charts="charts"
       :categories="categories"
       :dev-mode="devMode"
+      :demo-mode="demoMode"
       :board-count-by-category="boardCountByCategory"
       @close="warehouseVisible = false"
       @delete="deleteChart"
@@ -193,6 +194,7 @@ import BIWarehouseModal, { type BIChartEditPayload } from './BIWarehouseModal.vu
 const props = defineProps<{
   fileId: string
   config: any
+  demoMode?: boolean
 }>()
 
 const categories = ref<BICategory[]>([])
@@ -203,6 +205,7 @@ const activeCategoryId = ref('')
 const warehouseVisible = ref(false)
 const devMode = ref(false)
 const filterValues = reactive<Record<string, string>>({})
+const demoMode = computed(() => props.demoMode === true)
 
 const maxPerCategory = BI_MAX_BOARD_PER_CATEGORY
 const maxWarehouse = BI_MAX_WAREHOUSE_TOTAL
@@ -214,6 +217,7 @@ const customCategoryCount = computed(
 
 const canAddCategory = computed(
   () =>
+    !demoMode.value &&
     categories.value.length < maxCategoriesTotal &&
     customCategoryCount.value < BI_MAX_CUSTOM_CATEGORIES
 )
@@ -221,8 +225,7 @@ const canAddCategory = computed(
 const boardCountByCategory = computed(() => {
   const counts: Record<string, number> = {}
   for (const c of charts.value) {
-    // kpi_group 不计入分类数量统计
-    if (c.onBoard && c.chartType !== 'kpi_group') {
+    if (c.onBoard) {
       counts[c.categoryId] = (counts[c.categoryId] || 0) + 1
     }
   }
@@ -246,7 +249,7 @@ const hasActiveFilters = computed(() =>
   Object.values(filterValues).some((v) => v !== undefined && v !== null && v !== '')
 )
 
-const TAB_NAME_MAX_LEN = 4
+const TAB_NAME_MAX_LEN = 6
 
 function displayTabName(name: string) {
   return [...name].slice(0, TAB_NAME_MAX_LEN).join('')
@@ -275,9 +278,9 @@ async function handleAddCategory() {
       {
         confirmButtonText: '添加',
         cancelButtonText: '取消',
-        inputPlaceholder: '最多 4 个字，如：专题分析',
-        inputPattern: /^.{1,4}$/,
-        inputErrorMessage: '分类名称最多 4 个字'
+        inputPlaceholder: '最多 6 个字，如：经营专题',
+        inputPattern: /^.{1,6}$/,
+        inputErrorMessage: '分类名称最多 6 个字'
       }
     )
     const name = displayTabName(value.trim())
@@ -303,8 +306,8 @@ async function handleRenameCategory(cat: BICategory) {
       confirmButtonText: '保存',
       cancelButtonText: '取消',
       inputValue: cat.name,
-      inputPattern: /^.{1,4}$/,
-      inputErrorMessage: '分类名称最多 4 个字'
+      inputPattern: /^.{1,6}$/,
+      inputErrorMessage: '分类名称最多 6 个字'
     })
     const name = displayTabName(value.trim())
     const { data } = await updateBICategory(props.fileId, cat.id, name)
@@ -375,6 +378,10 @@ async function updateKpiItems(id: string, items: Array<{ label: string; value_fi
   if (!c) return
   const previous = c.items ? c.items.map((item) => ({ ...item })) : []
   c.items = items
+  if (demoMode.value) {
+    ElMessage.success('已更新演示指标')
+    return
+  }
   try {
     await updateBIChart(props.fileId, id, {
       title: c.title,
@@ -508,7 +515,29 @@ function normalizeConfig(config: any) {
       sql: chart.sql || '',
       onBoard: chart.on_board ?? chart.onBoard ?? true,
       collapsed: chart.collapsed ?? false,
-      expanded: chart.expanded ?? ['table', 'detail_table', 'bar', 'line', 'combo', 'ranking', 'kpi_group'].includes(chartType),
+      expanded: chart.expanded ?? [
+        'table',
+        'detail_table',
+        'bar',
+        'stacked_bar',
+        'horizontal_bar',
+        'line',
+        'multi_line',
+        'area',
+        'stacked_area',
+        'combo',
+        'ranking',
+        'treemap',
+        'funnel',
+        'scatter',
+        'bubble',
+        'heatmap',
+        'radar',
+        'gauge',
+        'waterfall',
+        'map',
+        'kpi_group'
+      ].includes(chartType),
       boardOrder: chart.board_order ?? chart.boardOrder ?? i,
       chartFilters: chart.chartFilters || {},
       intentType: chart.intent_type || chart.intentType,
@@ -516,6 +545,10 @@ function normalizeConfig(config: any) {
       items: chart.items || [],
       layout: chart.layout || {},
       tablePreview: {
+        columns: preview.columns || [],
+        rows: preview.rows || []
+      },
+      sourceTablePreview: {
         columns: preview.columns || [],
         rows: preview.rows || []
       },
@@ -564,6 +597,21 @@ function formatValue(value: any) {
 }
 
 async function refreshChartData(chart: BIChartItem) {
+  if (demoMode.value) {
+    const source = (chart as any).sourceTablePreview || chart.tablePreview
+    const filters = {
+      ...compactFilters(filterValues),
+      ...compactFilters(chart.chartFilters || {})
+    }
+    const rows = (source.rows || []).filter((row: Record<string, any>) =>
+      Object.entries(filters).every(([field, value]) =>
+        row[field] === undefined || row[field] === value
+      )
+    )
+    chart.tablePreview = { columns: source.columns || [], rows }
+    chart.chartMock = buildChartMock(chart.chartType, chart.tablePreview)
+    return
+  }
   try {
     const res = await getBIChartData(
       props.fileId,
@@ -607,33 +655,37 @@ watch(
 
 <style scoped>
 .insights-board {
-  --bi-accent: #D97757;
-  --bi-accent-hover: #C6613F;
-  --bi-accent-soft: rgba(217, 119, 87, 0.12);
-  --bi-bg: #F5F2EB;
-  --bi-surface: #FFFFFF;
-  --bi-surface-muted: #FAF8F5;
-  --bi-border: #E5E0D8;
-  --bi-text: #1C1917;
-  --bi-muted: #736C64;
-  --bi-faint: #A39E96;
+  --bi-accent: #C6613F;
+  --bi-accent-hover: #A84F33;
+  --bi-accent-soft: rgba(198, 97, 63, 0.1);
+  --bi-blue: #4E6D80;
+  --bi-green: #4D7B62;
+  --bi-bg: #F4F1EA;
+  --bi-surface: #FDFBF8;
+  --bi-surface-muted: #F8F4EE;
+  --bi-border: #E8E1D8;
+  --bi-border-strong: #D8CEC2;
+  --bi-text: #1F1A17;
+  --bi-muted: #736A61;
+  --bi-faint: #A39B92;
 
   display: flex;
-  height: calc(100vh - var(--header-height, 52px) - 20px);
+  height: calc(100vh - var(--header-height, 52px) - 56px);
   min-height: 0;
   gap: 0;
   color: var(--bi-text);
+  background: var(--bi-bg);
 }
 
 /* 左侧筛选 */
 .insights-sidebar {
-  width: 240px;
+  width: 252px;
   flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border-right: 1px solid rgba(0, 0, 0, 0.06);
-  padding: 20px 16px;
+  background: rgba(253, 251, 248, 0.74);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  border-right: 1px solid var(--bi-border);
+  padding: 18px 16px;
   display: flex;
   flex-direction: column;
   overflow-y: auto;
@@ -647,9 +699,10 @@ watch(
 }
 
 .sidebar-title {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   margin: 0;
+  color: var(--bi-text);
 }
 
 .link-clear {
@@ -659,6 +712,19 @@ watch(
   border: none;
   cursor: pointer;
   padding: 0;
+  border-radius: 6px;
+}
+
+.link-clear:hover {
+  color: var(--bi-accent-hover);
+}
+
+.link-clear:focus-visible,
+.category-tab:focus-visible,
+.btn-warehouse:focus-visible,
+.btn-outline:focus-visible {
+  outline: 2px solid rgba(198, 97, 63, 0.38);
+  outline-offset: 2px;
 }
 
 .sidebar-hint {
@@ -671,7 +737,14 @@ watch(
 .filter-list {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
+}
+
+.filter-item {
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.54);
+  border: 1px solid rgba(232, 225, 216, 0.78);
+  border-radius: 8px;
 }
 
 .filter-label {
@@ -687,9 +760,16 @@ watch(
 }
 
 .insights-sidebar :deep(.el-select__wrapper) {
-  border-radius: 10px;
+  min-height: 34px;
+  border-radius: 8px;
   box-shadow: none;
   border: 1px solid var(--bi-border);
+  background: var(--bi-surface);
+}
+
+.insights-sidebar :deep(.el-select__wrapper.is-focused) {
+  border-color: rgba(198, 97, 63, 0.48);
+  box-shadow: 0 0 0 3px rgba(198, 97, 63, 0.1);
 }
 
 .sidebar-meta {
@@ -702,7 +782,12 @@ watch(
   display: flex;
   justify-content: space-between;
   font-size: 12px;
-  padding: 6px 0;
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(232, 225, 216, 0.58);
+}
+
+.meta-row:last-child {
+  border-bottom: 0;
 }
 
 .meta-label {
@@ -729,22 +814,22 @@ watch(
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 16px 10px;
+  padding: 12px 18px 11px;
   overflow: visible;
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: rgba(253, 251, 248, 0.88);
+  backdrop-filter: blur(16px) saturate(150%);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
   border-bottom: 1px solid var(--bi-border);
 }
 
 .category-tabs {
   display: flex;
-  gap: 8px;
+  gap: 7px;
   flex: 1;
   min-width: 0;
   overflow: hidden;
   flex-wrap: nowrap;
-  padding-top: 6px;
+  padding: 5px 0 1px;
 }
 
 .category-tab {
@@ -753,30 +838,31 @@ watch(
   align-items: center;
   justify-content: center;
   flex: 1 1 0;
-  min-width: 88px;
-  height: 38px;
-  padding: 8px 8px 6px;
-  font-size: 13px;
+  min-width: 92px;
+  height: 40px;
+  padding: 8px 9px 6px;
+  font-size: 12px;
   font-weight: 500;
   font-family: inherit;
   color: var(--bi-muted);
-  background: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.52);
   border: 1px solid var(--bi-border);
-  border-radius: 10px;
+  border-radius: 8px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .category-tab:hover {
-  background: #fff;
+  background: var(--bi-surface);
   color: var(--bi-text);
-  border-color: #D4CEC4;
+  border-color: var(--bi-border-strong);
 }
 
 .category-tab.active {
-  background: var(--bi-accent-soft);
-  border-color: rgba(217, 119, 87, 0.45);
+  background: #FFF8F4;
+  border-color: rgba(198, 97, 63, 0.42);
   color: var(--bi-accent-hover);
+  box-shadow: inset 0 -2px 0 rgba(198, 97, 63, 0.24);
 }
 
 .tab-body {
@@ -790,7 +876,7 @@ watch(
 .tab-name {
   white-space: nowrap;
   flex-shrink: 0;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.2;
   letter-spacing: 0;
 }
@@ -804,7 +890,7 @@ watch(
   line-height: 18px;
   border-radius: 9px;
   text-align: center;
-  background: rgba(28, 25, 23, 0.06);
+  background: rgba(31, 26, 23, 0.06);
   color: var(--bi-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -823,16 +909,16 @@ watch(
   font-weight: 600;
   line-height: 1;
   padding: 2px 5px;
-  border-radius: 4px;
+  border-radius: 6px;
   white-space: nowrap;
   pointer-events: none;
   box-shadow: 0 1px 3px rgba(28, 25, 23, 0.08);
 }
 
 .tab-float-tag--sheet {
-  background: rgba(30, 96, 213, 0.12);
-  color: #1E60D5;
-  border: 1px solid rgba(30, 96, 213, 0.2);
+  background: rgba(78, 109, 128, 0.1);
+  color: var(--bi-blue);
+  border: 1px solid rgba(78, 109, 128, 0.22);
 }
 
 .tab-float-tag--custom {
@@ -851,7 +937,7 @@ watch(
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
+  border-radius: 8px;
   background: #fff;
   border: 1px solid var(--bi-border);
   color: var(--bi-muted);
@@ -880,7 +966,7 @@ watch(
   min-width: 56px;
   padding: 0;
   gap: 0;
-  border: 1.5px dashed #D4CEC4;
+  border: 1px dashed var(--bi-border-strong);
   background: rgba(255, 255, 255, 0.5);
   color: var(--bi-muted);
 }
@@ -913,13 +999,13 @@ watch(
   color: var(--bi-text);
   background: var(--bi-surface);
   border: 1px solid var(--bi-border);
-  border-radius: 10px;
+  border-radius: 8px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .btn-warehouse:hover {
-  border-color: #D4CEC4;
+  border-color: var(--bi-border-strong);
   background: var(--bi-surface-muted);
 }
 
@@ -931,7 +1017,7 @@ watch(
   font-weight: 600;
   line-height: 20px;
   text-align: center;
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--bi-accent);
   color: #fff;
 }
@@ -939,7 +1025,8 @@ watch(
 .insights-canvas {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
+  padding: 18px;
+  scrollbar-gutter: stable;
 }
 
 .canvas-empty {
@@ -949,6 +1036,9 @@ watch(
   justify-content: center;
   min-height: 320px;
   text-align: center;
+  border: 1px dashed var(--bi-border-strong);
+  border-radius: 8px;
+  background: rgba(253, 251, 248, 0.5);
 }
 
 .empty-title {
@@ -973,7 +1063,7 @@ watch(
   color: var(--bi-accent);
   background: #fff;
   border: 1px solid rgba(217, 119, 87, 0.45);
-  border-radius: 10px;
+  border-radius: 8px;
   cursor: pointer;
 }
 
@@ -984,7 +1074,7 @@ watch(
 .chart-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 16px;
   align-content: start;
 }
 
@@ -1000,15 +1090,61 @@ watch(
 .chart-grid__item--drag-over {
   outline: 2px dashed rgba(217, 119, 87, 0.55);
   outline-offset: 4px;
-  border-radius: 16px;
+  border-radius: 8px;
 }
 
 @media (max-width: 900px) {
+  .insights-board {
+    flex-direction: column;
+    height: auto;
+    min-height: calc(100vh - var(--header-height, 52px) - 56px);
+  }
+
+  .insights-sidebar {
+    width: auto;
+    max-height: none;
+    border-right: 0;
+    border-bottom: 1px solid var(--bi-border);
+  }
+
+  .filter-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sidebar-meta {
+    margin-top: 16px;
+  }
+
+  .insights-topbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .category-tabs {
+    overflow-x: auto;
+  }
+
+  .category-tab {
+    flex: 0 0 108px;
+  }
+
   .chart-grid {
     grid-template-columns: 1fr;
   }
   .chart-grid__item--full {
     grid-column: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .filter-list {
+    grid-template-columns: 1fr;
+  }
+
+  .insights-sidebar,
+  .insights-canvas {
+    padding: 14px;
   }
 }
 

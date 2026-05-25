@@ -3,7 +3,14 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.orm import DeclarativeBase
 from app.config import DATABASE_URL
 
-engine = create_async_engine(DATABASE_URL, echo=False)
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    pool_size=20,
+    max_overflow=30,
+    pool_recycle=3600,
+    pool_pre_ping=True,
+)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -47,6 +54,8 @@ async def migrate_db():
         ("file_records", "recommended_questions", "JSON"),
         ("file_records", "recommended_questions_status", "TEXT"),
         ("file_records", "bi_status", "TEXT"),
+        ("file_records", "bi_generation_started_at", "DATETIME"),
+        ("file_records", "bi_generation_finished_at", "DATETIME"),
     ]
     async with engine.begin() as conn:
         for table, column, col_type in migrations:

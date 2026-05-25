@@ -680,8 +680,13 @@ async function sendInsightMessage(text: string) {
     messages.value.push({ role: 'assistant', content: data.answer || '已完成分析。', blocks })
     await loadHistory()
   } catch (e: any) {
-    ElMessage.error(e.response?.data?.detail || e.message || '洞察处理失败')
-    messages.value.push({ role: 'assistant', content: e.response?.data?.detail || e.message || '洞察处理失败' })
+    const detail = e.response?.data?.detail
+    const errText =
+      (typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((d: any) => d.msg || d).join('；') : null) ||
+      e.message ||
+      '洞察处理失败'
+    ElMessage.error(errText)
+    messages.value.push({ role: 'assistant', content: errText })
   } finally {
     sending.value = false
     stopThinkingCycle()

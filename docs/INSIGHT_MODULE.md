@@ -73,11 +73,9 @@ QuickQAService.answer_question()
 问题 -> 意图/选表 -> SQL -> 执行 SQL -> 基于查询结果生成回答
 ```
 
-### P0：SQL 执行失败被吞掉
+### ~~P0：SQL 执行失败被吞掉~~（已修复 2026-05-25）
 
-`backend/app/services/quick_qa.py` 当前在 SQL 执行异常时回退到 `qa_result.get("data", [])`。这和项目「不使用 Mock 或假数据冒充成功」原则冲突。
-
-建议：SQL 非法或执行失败时，返回明确错误；如果要保留用户体验，可以把错误包装成可读 `answer`，但不能伪装为查询成功。
+`quick_qa.py` 已不再在 LLM 失败时返回占位回答，也不在 SQL 执行失败时静默回退空数据；失败经路由返回 HTTP 503，`detail` 为可读文案。
 
 ### P0：深度洞察关键词确认没有真正暂停
 

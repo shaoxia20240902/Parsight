@@ -7,7 +7,7 @@ import json
 import logging
 from typing import Any, Dict, List
 
-from app.config import AGENT_MAX_RETRIES, LLM_MODEL_DEEPSEEK_PRIMARY
+from app.config import AGENT_MAX_RETRIES
 from app.services.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -109,6 +109,21 @@ class RelationsAnalysisAgent:
         ]
         content = await self._chat_with_retry(messages)
         return self._strip_code_fence(content)
+
+    async def run_stream(self, sheets_context: List[Dict[str, Any]]):
+        user_msg = self._build_user_message(sheets_context)
+        messages = [
+            {"role": "system", "content": RELATIONS_SYSTEM_PROMPT},
+            {"role": "user", "content": user_msg},
+        ]
+        async for chunk in self.llm.chat_completion_stream(
+            messages=messages,
+            temperature=0.35,
+            max_tokens=4096,
+            timeout=120.0,
+        ):
+            if chunk:
+                yield chunk
 
     async def extract_disputed_relations(
         self,
@@ -215,7 +230,6 @@ class RelationsAnalysisAgent:
                     temperature=0.35,
                     max_tokens=max_tokens,
                     timeout=timeout,
-                    model_override=LLM_MODEL_DEEPSEEK_PRIMARY,
                 )
             except Exception as e:
                 last_error = e
@@ -239,7 +253,6 @@ class RelationsAnalysisAgent:
                     temperature=0.2,
                     max_tokens=2048,
                     timeout=60.0,
-                    model_override=LLM_MODEL_DEEPSEEK_PRIMARY,
                 )
             except Exception as e:
                 last_error = e

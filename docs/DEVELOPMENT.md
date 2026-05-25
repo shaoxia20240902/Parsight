@@ -24,7 +24,7 @@
 |----|------|
 | 后端 | Python 3、FastAPI、SQLAlchemy（async）、MySQL |
 | 前端 | Vue 3、Vite、Pinia、Element Plus、marked、ECharts |
-| LLM | DashScope 兼容 API（`AGENT_BACKEND=local`） |
+| LLM | 管理端启用的 OpenAI 兼容 API（`AGENT_BACKEND=local`） |
 | 数据导入 | 全列 `TEXT`，避免类型推断错误 |
 
 ---
@@ -246,7 +246,7 @@ GET /api/data/relations?space_id=&regenerate=
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/chat/quick-qa` | 快速问答 |
+| POST | `/api/chat/quick-qa` | 快速问答；LLM 不可用（如余额不足 HTTP 402）时返回 **503**，`detail` 为可读错误文案 |
 | POST | `/api/chat/deep-research` | 深度调研（SSE） |
 | GET | `/api/chat/history` | 历史 |
 | POST | `/api/chat/confirm-keyword` | 关键词确认 |
@@ -300,8 +300,8 @@ GET /api/data/relations?space_id=&regenerate=
 | 变量 | 说明 |
 |------|------|
 | `AGENT_BACKEND` | `local`（唯一可用） |
-| `DASHSCOPE_API_KEY` | LLM 密钥，**必填** |
-| `LLM_MODEL_QWEN_PRIMARY` | 主模型 |
+| **LLM API / 模型** | **不在 `.env` 配置**；在管理后台「LLM 配置」创建并启用（`api_base`、`api_key`、`primary_model`、`alt_model` 均必填）。启动时加载 `is_active=true` 的记录到进程内存，无启用项时 AI 调用直接失败 |
+| `LLM_MAX_TOKENS` / `LLM_TEMPERATURE` | 可选，控制单次调用 token 与温度 |
 | `SAMPLE_FIRST_N` / `SAMPLE_RANDOM_N` | 理解采样（config.py） |
 | `RELATIONS_RANDOM_SAMPLE_N` | 关联采样每表行数（默认 20） |
 
@@ -356,5 +356,10 @@ cd frontend && npm install && npm run dev
 | 2026-05-16 | BI 流水线专用日志 `backend/logs/bi_pipeline.log`（`bi_pipeline_logger`）；`generation_report.pipeline_run_id` 关联单次生成 |
 | 2026-05-16 | 修复 `MetricSpecCompiler._resolve_fields` 缺失；新增 `GET /api/bi/status`；BI 页进入仅查状态、手动生成 |
 | 2026-05-16 | BI 生成 UI（Claude 风格）：图表轮播 + 思考文案；`bi_thinking_journal` 入库；`GET /api/bi/thinking` |
+| 2026-05-25 | 快速问答：移除 LLM 失败静默兜底；402/401/403 不重试；失败返回 HTTP 503 |
+| 2026-05-25 | LLM 运行时仅使用管理端已启用配置（地址/Key/主备模型），移除 `.env` 与 `model_override` 兜底 |
+| 2026-05-25 | 修复 `LLMClient` 构造时读取配置导致后端无法启动（登录代理 ETIMEDOUT）；改为每次调用前解析管理端配置 |
+| 2026-05-25 | BI 生成体验：`categories_ready` 后进入分阶段看板（`BIStagedGeneratingBoard`）；分析文案最多 3 行滚动；Sheet 图表规划与分类执行改为 `asyncio.gather` 并发 |
+| 2026-05-25 | 修复推荐问题生成误写 `file_records.status=generating_recommendations`（超长）：改用 `recommended_questions_status`；`GET /api/files` 返回该字段 |
 
 <!-- 新增变更请在上方表格追加一行，格式：| YYYY-MM-DD | 简要说明 | -->

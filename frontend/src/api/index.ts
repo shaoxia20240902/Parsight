@@ -13,6 +13,17 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('xlsx-bi-token')
+      window.location.href = '/login'
+    }
+    return Promise.reject(error)
+  }
+)
+
 export const login = (username: string, password: string) => {
   return api.post('/auth/login', { username, password })
 }
@@ -26,13 +37,17 @@ export const quickQA = (
     conversation_history?: Array<Record<string, any>>
   }
 ) => {
-  return api.post('/chat/quick-qa', {
-    file_id: fileId,
-    question,
-    space_id: options?.space_id || null,
-    session_id: options?.session_id || null,
-    conversation_history: options?.conversation_history || [],
-  })
+  return api.post(
+    '/chat/quick-qa',
+    {
+      file_id: fileId,
+      question,
+      space_id: options?.space_id || null,
+      session_id: options?.session_id || null,
+      conversation_history: options?.conversation_history || [],
+    },
+    { timeout: 120000 }
+  )
 }
 
 export const deepResearchUrl = '/api/chat/deep-research'
@@ -63,7 +78,29 @@ export type BIProgressEvent = {
   message?: string
   charts_count?: number
   categories_count?: number
+  sheet_count?: number
+  category_id?: string
+  category_name?: string
+  chart_id?: string
+  chart_type?: string
+  title?: string
+  done_count?: number
+  failed_count?: number
+  table_name?: string
+  type_counts?: Record<string, number>
+  generation_started_at?: string
+  generation_finished_at?: string
+  server_time?: string
+  categories?: Array<Record<string, any>>
+  global_filters?: Array<Record<string, any>>
+  chart_plan?: Array<Record<string, any>>
   data?: unknown
+  // SSE 流式 thinking entry
+  entry?: BIThinkingEntry
+  // 表理解内容
+  sheet_name?: string
+  understanding_preview?: string
+  understanding_length?: number
 }
 
 export const generateBIConfig = async (
@@ -76,6 +113,11 @@ export const generateBIConfig = async (
     headers: token ? { Authorization: `Bearer ${token}` } : {}
   })
   if (!response.ok) {
+    if (response.status === 401) {
+      localStorage.removeItem('xlsx-bi-token')
+      window.location.href = '/login'
+      throw new Error('登录已过期，请重新登录')
+    }
     let detail = 'BI 配置生成失败'
     try {
       const err = await response.json()
@@ -146,6 +188,9 @@ export const getBIStatus = (fileId: string) => {
       charts_count?: number
       pending_tables?: string[]
       action?: string
+      generation_started_at?: string
+      generation_finished_at?: string
+      server_time?: string
     }
   }>(`/bi/status/${fileId}`)
 }

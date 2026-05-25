@@ -194,14 +194,17 @@ async def quick_qa(request: QuickQARequest, db: AsyncSession = Depends(get_db)):
     # 创建快速问答服务
     quick_qa_service = QuickQAService(db_service, ai_service)
 
-    # 执行问答
-    result = await quick_qa_service.answer_question(
-        file_id=request.file_id,
-        question=request.question,
-        table_schemas=table_schemas,
-        sheets_summary=sheets_summary,
-        conversation_history=request.conversation_history or [],
-    )
+    # 执行问答（LLM/数据库失败直接向上抛出，不做静默兜底）
+    try:
+        result = await quick_qa_service.answer_question(
+            file_id=request.file_id,
+            question=request.question,
+            table_schemas=table_schemas,
+            sheets_summary=sheets_summary,
+            conversation_history=request.conversation_history or [],
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     # 保存助手回复
     answer_text = result.get("answer", "") if isinstance(result, dict) else str(result)

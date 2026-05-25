@@ -18,6 +18,7 @@ from app.models.chat_history import ChatHistory
 from app.routers.auth import get_current_admin_user
 from app.services.llm_config_service import LLMConfigService
 from app.services.llm_client import set_llm_config
+from app.services.db_service import DBService
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -336,6 +337,37 @@ async def delete_user(
 
 # ========== LLM 配置管理 ==========
 
+
+def _assert_llm_config_complete(
+    *,
+    api_base: str,
+    api_key: str,
+    primary_model: str,
+    alt_model: Optional[str],
+) -> None:
+    if not (api_base or "").strip():
+        raise HTTPException(status_code=400, detail="api_base 不能为空")
+    if not (api_key or "").strip():
+        raise HTTPException(status_code=400, detail="api_key 不能为空")
+    if not (primary_model or "").strip():
+        raise HTTPException(status_code=400, detail="primary_model 不能为空")
+    if not (alt_model or "").strip():
+        raise HTTPException(status_code=400, detail="alt_model 不能为空（运行时主/备模型均来自管理端）")
+
+
+def _apply_active_llm_config(active: Optional[dict]) -> dict:
+    if not active:
+        raise HTTPException(status_code=400, detail="没有可启用的 LLM 配置")
+    _assert_llm_config_complete(
+        api_base=active["api_base"],
+        api_key=active["api_key"],
+        primary_model=active["primary_model"],
+        alt_model=active.get("alt_model"),
+    )
+    set_llm_config(active)
+    return active
+
+
 class LLMConfigCreateRequest(BaseModel):
     name: str
     api_base: str
@@ -372,6 +404,12 @@ async def create_llm_config(
     db: AsyncSession = Depends(get_db),
 ):
     """创建 LLM 配置"""
+    _assert_llm_config_complete(
+        api_base=req.api_base,
+        api_key=req.api_key,
+        primary_model=req.primary_model,
+        alt_model=req.alt_model,
+    )
     service = LLMConfigService(db)
     config = await service.create_config(
         name=req.name,
@@ -383,7 +421,7 @@ async def create_llm_config(
     )
     if req.is_active:
         active = await service.get_active_config()
-        set_llm_config(active)
+        _apply_active_llm_config(active)
     return {"code": 200, "data": config}
 
 
@@ -409,7 +447,7 @@ async def update_llm_config(
         raise HTTPException(status_code=404, detail="配置不存在")
     if req.is_active:
         active = await service.get_active_config()
-        set_llm_config(active)
+        _apply_active_llm_config(active)
     return {"code": 200, "data": config}
 
 
@@ -424,9 +462,11 @@ async def delete_llm_config(
     ok = await service.delete_config(config_id)
     if not ok:
         raise HTTPException(status_code=404, detail="配置不存在")
-    # 检查当前活跃配置是否被删除
     active = await service.get_active_config()
-    set_llm_config(active)
+    if active:
+        _apply_active_llm_config(active)
+    else:
+        set_llm_config(None)
     return {"code": 200, "message": "配置已删除"}
 
 
@@ -442,8 +482,7 @@ async def activate_llm_config(
     if not ok:
         raise HTTPException(status_code=404, detail="配置不存在")
     active = await service.get_active_config()
-    set_llm_config(active)
-    return {"code": 200, "data": active}
+    return {"code": 200, "data": _apply_active_llm_config(active)}
 
 
 class LLMConfigTestRequest(BaseModel):
@@ -554,8 +593,11 @@ async def create_space(
     if code_result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="空间代码已存在")
 
+    db_service = DBService(db)
+    seq_id = await db_service.get_next_space_seq_id()
     space = Space(
         id=str(uuid.uuid4()),
+        seq_id=seq_id,
         name=req.name,
         code=code,
         description=req.description or "",
@@ -617,17 +659,6 @@ async def delete_space(
     space = result.scalar_one_or_none()
     if not space:
         raise HTTPException(status_code=404, detail="空间不存在")
-
-    # 不能删除自己当前正在使用的空间
-    active_result = await db.execute(
-        select(Space).where(
-            Space.owner_id == _admin.id,
-            Space.id == space_id,
-            Space.is_active == True
-        )
-    )
-    if active_result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="不能删除当前正在使用的空间")
 
     await _delete_space_data(db, space_id)
     await db.delete(space)

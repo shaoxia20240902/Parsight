@@ -32,6 +32,7 @@ from app.services.bi_pipeline_logger import (
     log_step_warn,
 )
 from app.services.db_service import DBService
+from app.models.database import async_session
 from app.utils.sql_validator import SQLValidator
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,32 @@ logger = logging.getLogger(__name__)
 class BIChartTypeResolver:
     """Turns question/spec intent into a renderable chart contract."""
 
-    VALID_TYPES = {"kpi_group", "bar", "line", "pie", "combo", "ranking", "table", "detail_table"}
+    VALID_TYPES = {
+        "kpi_group",
+        "kpi",
+        "bar",
+        "stacked_bar",
+        "horizontal_bar",
+        "line",
+        "multi_line",
+        "area",
+        "stacked_area",
+        "pie",
+        "donut",
+        "combo",
+        "ranking",
+        "table",
+        "detail_table",
+        "treemap",
+        "funnel",
+        "scatter",
+        "bubble",
+        "heatmap",
+        "radar",
+        "gauge",
+        "waterfall",
+        "map",
+    }
 
     def resolve(
         self,
@@ -64,9 +90,15 @@ class BIChartTypeResolver:
         elif analysis_type == "ranking" or visual_intent == "ranking":
             chart_type = "ranking"
         elif analysis_type in {"share", "structure"} or visual_intent == "share_structure":
-            chart_type = "pie"
+            chart_type = "donut" if len(dimensions) <= 1 else "treemap"
+        elif analysis_type in {"funnel", "conversion"} or visual_intent == "funnel":
+            chart_type = "funnel"
+        elif analysis_type in {"correlation", "distribution"} or visual_intent in {"scatter", "relationship"}:
+            chart_type = "scatter"
+        elif analysis_type in {"target_achievement"} or visual_intent == "gauge":
+            chart_type = "gauge"
         elif analysis_type in {"trend", "growth_rate"} or visual_intent in {"time_trend", "time_structure_trend"}:
-            chart_type = "line"
+            chart_type = "area" if visual_intent == "time_structure_trend" else "line"
         elif self._needs_combo(metrics, spec):
             chart_type = "combo"
 
@@ -114,7 +146,7 @@ class BIChartTypeResolver:
             })
         if y_items:
             encoding["y"] = y_items
-        if chart_type == "pie" and len(metrics) == 1:
+        if chart_type in {"pie", "donut", "treemap", "funnel"} and len(metrics) == 1:
             encoding["share"] = {"field": "占比", "label": "占比", "format": "percent"}
         if chart_type == "ranking" and metrics:
             encoding["sort"] = {"field": metrics[0].get("label") or metrics[0].get("field"), "direction": "desc"}
@@ -175,7 +207,15 @@ class BIBusinessGenerator:
         sheets_data: Optional[List[Dict[str, Any]]] = None,
         *,
         on_thinking_entry: Optional[Any] = None,
+        on_progress_event: Optional[Any] = None,
     ) -> Dict[str, Any]:
+        async def emit(event: Dict[str, Any]) -> None:
+            if not on_progress_event:
+                return
+            result = on_progress_event(event)
+            if asyncio.iscoroutine(result):
+                await result
+
         run_ctx = BIPipelineRunContext(file_id)
         journal = BIThinkingJournal(file_id, run_ctx.run_id)
         run_ctx.journal = journal
@@ -221,6 +261,23 @@ class BIBusinessGenerator:
                     p["data_granularity"] = src.get("data_granularity") or ""
                     p["time_range"] = src.get("time_range") or ""
 
+            # 流式推送每张表的六维理解摘要
+            await emit({
+                "step": "understanding_loaded",
+                "status": "processing",
+                "table_name": sheet["table_name"],
+                "sheet_name": sheet["sheet_name"],
+                "understanding_preview": text[:280] if text else "",
+                "understanding_length": len(text) if text else 0,
+            })
+
+        await emit({
+            "step": "category_planning",
+            "status": "processing",
+            "message": "正在根据表理解规划看板分类",
+            "sheet_count": len(profiles),
+        })
+
         try:
             industry_result = await self.industry_agent.run({
                 "file_payload": file_payload_for_industry(profiles, understanding_map),
@@ -247,10 +304,26 @@ class BIBusinessGenerator:
         sheet_plan = await self.planner.plan_sheet_categories(
             profiles, filter_candidates, understanding_map
         )
+        categories = self._build_sheet_categories(profiles, sheet_plan)
+
+        await emit({
+            "step": "categories_ready",
+            "status": "completed",
+            "message": "分类规划完成",
+            "categories_count": len(categories),
+            "categories": categories,
+        })
+
+        await emit({
+            "step": "chart_planning",
+            "status": "processing",
+            "message": "正在规划各分类图表数量、类型与公共筛选项",
+            "categories": categories,
+        })
+
         global_filters = await self._hydrate_filter_options(
             self._apply_filter_plan(filter_candidates, sheet_plan.get("global_filter_labels", []))
         )
-        categories = self._build_sheet_categories(profiles, sheet_plan)
 
         charts_dropped: List[Dict[str, Any]] = []
         sheet_errors: List[Dict[str, Any]] = []
@@ -281,7 +354,33 @@ class BIBusinessGenerator:
                 })
                 return []
 
-        sheet_chart_groups = await asyncio.gather(*[_run_sheet(p) for p in profiles])
+        async def _plan_sheet_charts(profile: Dict[str, Any]) -> List[Dict[str, Any]]:
+            category_id = self._category_id_for(profile)
+            await emit({
+                "step": "category_plan_start",
+                "status": "processing",
+                "message": f"正在规划「{profile.get('sheet_name', '分类')}」的图表结构",
+                "category_id": category_id,
+                "category_name": profile.get("sheet_name"),
+                "table_name": profile.get("table_name"),
+            })
+            group = await _run_sheet(profile)
+            type_counts: Dict[str, int] = {}
+            for chart in group:
+                chart_type = chart.get("chart_type") or chart.get("chartType") or "table"
+                type_counts[chart_type] = type_counts.get(chart_type, 0) + 1
+            await emit({
+                "step": "category_plan_done",
+                "status": "completed",
+                "message": f"「{profile.get('sheet_name', '分类')}」已规划 {len(group)} 个图表",
+                "category_id": category_id,
+                "category_name": profile.get("sheet_name"),
+                "charts_count": len(group),
+                "type_counts": type_counts,
+            })
+            return group
+
+        sheet_chart_groups = await asyncio.gather(*[_plan_sheet_charts(profile) for profile in profiles])
         for group in sheet_chart_groups:
             all_charts.extend(group)
 
@@ -296,13 +395,90 @@ class BIBusinessGenerator:
             categories.extend(relation_categories)
             all_charts.extend(relation_charts)
 
-        # 并发执行图表 SQL 预览与修复（受信号量限制并发数）
-        chart_results = await asyncio.gather(*[
-            self._limited(
-                self._execute_chart_with_repair(chart, profiles, understanding_map, charts_dropped, run_ctx)
-            )
-            for chart in all_charts
+        chart_plan = self._build_chart_plan(categories, all_charts, global_filters)
+        await emit({
+            "step": "chart_plan_ready",
+            "status": "completed",
+            "message": "图表规划完成",
+            "categories": categories,
+            "global_filters": global_filters,
+            "chart_plan": chart_plan,
+            "charts_count": len(all_charts),
+        })
+
+        # 按分类顺序执行图表 SQL 预览与修复，便于前端展示可理解的进度。
+        chart_results: List[Optional[Dict[str, Any]]] = []
+        category_order = [c["id"] for c in categories]
+        charts_by_category: Dict[str, List[Dict[str, Any]]] = {cid: [] for cid in category_order}
+        for chart in all_charts:
+            charts_by_category.setdefault(chart.get("category_id", ""), []).append(chart)
+
+        async def _execute_category(category: Dict[str, Any]) -> List[Optional[Dict[str, Any]]]:
+            category_id = category["id"]
+            category_charts = charts_by_category.get(category_id, [])
+            await emit({
+                "step": "category_start",
+                "status": "processing",
+                "category_id": category_id,
+                "category_name": category.get("display_name") or category.get("name"),
+                "charts_count": len(category_charts),
+            })
+
+            async def _execute_one(chart: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+                await emit({
+                    "step": "chart_start",
+                    "status": "processing",
+                    "category_id": category_id,
+                    "chart_id": chart.get("id"),
+                    "chart_type": chart.get("chart_type") or chart.get("chartType"),
+                    "title": chart.get("title"),
+                })
+                result = await self._execute_chart_with_repair(
+                    chart, profiles, understanding_map, charts_dropped, run_ctx
+                )
+                if result:
+                    await emit({
+                        "step": "chart_done",
+                        "status": "completed",
+                        "category_id": category_id,
+                        "chart_id": chart.get("id"),
+                        "chart_type": chart.get("chart_type") or chart.get("chartType"),
+                        "title": chart.get("title"),
+                    })
+                else:
+                    await emit({
+                        "step": "chart_failed",
+                        "status": "failed",
+                        "category_id": category_id,
+                        "chart_id": chart.get("id"),
+                        "chart_type": chart.get("chart_type") or chart.get("chartType"),
+                        "title": chart.get("title"),
+                        "message": "图表执行失败，已记录到生成报告",
+                    })
+                return result
+
+            category_results = await asyncio.gather(*[
+                self._limited(_execute_one(chart))
+                for chart in category_charts
+            ])
+            done_count = len([r for r in category_results if r])
+            failed_count = len(category_results) - done_count
+            await emit({
+                "step": "category_done",
+                "status": "completed" if failed_count == 0 else "partial_failed",
+                "category_id": category_id,
+                "category_name": category.get("display_name") or category.get("name"),
+                "done_count": done_count,
+                "failed_count": failed_count,
+                "charts_count": len(category_charts),
+            })
+            return category_results
+
+        category_result_groups = await asyncio.gather(*[
+            _execute_category(category) for category in categories
         ])
+        for category_results in category_result_groups:
+            chart_results.extend(category_results)
         valid_charts = [r for r in chart_results if r]
 
         valid_charts = self._rank_and_layout(valid_charts)
@@ -781,7 +957,8 @@ class BIBusinessGenerator:
         self, chart: Dict[str, Any], run_ctx: Optional[BIPipelineRunContext] = None,
     ) -> Tuple[Optional[str], str]:
         try:
-            rows = await self.db.execute_query(chart["sql"])
+            async with async_session() as preview_db:
+                rows = await DBService(preview_db).execute_query(chart["sql"])
         except Exception as e:
             if run_ctx:
                 log_step_warn(
@@ -813,7 +990,8 @@ class BIBusinessGenerator:
         comparison = {}
         if chart.get("summary_sql"):
             try:
-                summary_rows = await self.db.execute_query(chart["summary_sql"])
+                async with async_session() as summary_db:
+                    summary_rows = await DBService(summary_db).execute_query(chart["summary_sql"])
                 comparison = summary_rows[0] if summary_rows else {}
             except Exception:
                 comparison = {}
@@ -994,6 +1172,42 @@ class BIBusinessGenerator:
             }
             for idx, p in enumerate(profiles)
         ]
+
+    def _build_chart_plan(
+        self,
+        categories: List[Dict[str, Any]],
+        charts: List[Dict[str, Any]],
+        global_filters: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        plan: List[Dict[str, Any]] = []
+        charts_by_category: Dict[str, List[Dict[str, Any]]] = {}
+        for chart in charts:
+            charts_by_category.setdefault(chart.get("category_id", ""), []).append(chart)
+        for category in categories:
+            category_id = category["id"]
+            category_charts = charts_by_category.get(category_id, [])
+            type_counts: Dict[str, int] = {}
+            chart_items = []
+            for chart in category_charts:
+                chart_type = chart.get("chart_type") or chart.get("chartType") or "table"
+                type_counts[chart_type] = type_counts.get(chart_type, 0) + 1
+                chart_items.append({
+                    "id": chart.get("id"),
+                    "title": chart.get("title"),
+                    "chart_type": chart_type,
+                    "category_id": category_id,
+                    "status": "waiting",
+                })
+            plan.append({
+                "category_id": category_id,
+                "category_name": category.get("display_name") or category.get("name"),
+                "table_name": category.get("table_name"),
+                "charts_count": len(category_charts),
+                "type_counts": type_counts,
+                "global_filter_count": len(global_filters),
+                "charts": chart_items,
+            })
+        return plan
 
     def _apply_filter_plan(self, filters, filter_labels):
         label_by_key = {item.get("canonical_key"): item for item in filter_labels or [] if item.get("canonical_key")}
