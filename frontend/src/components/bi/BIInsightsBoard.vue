@@ -118,21 +118,22 @@
         </div>
 
         <div
-          v-else
           class="chart-grid"
+          :class="{ 'chart-grid--hidden': boardCharts.length === 0 }"
           @dragover.prevent="onGridDragOver"
         >
           <div
-            v-for="(chart, idx) in boardCharts"
-            :key="chart.id"
+            v-for="(chart, idx) in allBoardCharts"
+            :key="chartRenderKey(chart, idx)"
+            v-show="chart.categoryId === activeCategoryId"
             class="chart-grid__item"
             :class="{
               'chart-grid__item--full': chart.expanded,
-              'chart-grid__item--drag-over': dragOverIndex === idx
+              'chart-grid__item--drag-over': dragOverIndex === boardChartIndex(chart)
             }"
-            @dragover.prevent="onItemDragOver(idx)"
+            @dragover.prevent="onItemDragOver(boardChartIndex(chart))"
             @dragleave="onItemDragLeave"
-            @drop.prevent="onItemDrop(idx)"
+            @drop.prevent="onItemDrop(boardChartIndex(chart))"
           >
             <BIChartCard
               :chart="chart"
@@ -238,6 +239,15 @@ const boardCharts = computed(() =>
     .sort((a, b) => (a.boardOrder ?? 0) - (b.boardOrder ?? 0))
 )
 
+const allBoardCharts = computed(() =>
+  charts.value
+    .filter((c) => c.onBoard)
+    .sort((a, b) =>
+      String(a.categoryId).localeCompare(String(b.categoryId)) ||
+      ((a.boardOrder ?? 0) - (b.boardOrder ?? 0))
+    )
+)
+
 const draggingId = ref<string | null>(null)
 const dragOverIndex = ref<number | null>(null)
 
@@ -253,6 +263,14 @@ const TAB_NAME_MAX_LEN = 6
 
 function displayTabName(name: string) {
   return [...name].slice(0, TAB_NAME_MAX_LEN).join('')
+}
+
+function chartRenderKey(chart: BIChartItem, index: number) {
+  return `${(chart as any).renderKey || chart.id}:${index}`
+}
+
+function boardChartIndex(chart: BIChartItem) {
+  return boardCharts.value.findIndex((item) => item.id === chart.id)
 }
 
 function clearFilters() {
@@ -348,8 +366,9 @@ async function handleDeleteCategory(cat: BICategory) {
 }
 
 function toggleCollapse(id: string) {
-  const c = charts.value.find((x) => x.id === id)
-  if (c) c.collapsed = !c.collapsed
+  const index = charts.value.findIndex((x) => x.id === id)
+  const c = charts.value[index]
+  if (c) charts.value.splice(index, 1, { ...c, collapsed: !c.collapsed })
 }
 
 function moveToWarehouse(id: string) {
@@ -361,8 +380,9 @@ function moveToWarehouse(id: string) {
 }
 
 function toggleExpand(id: string) {
-  const c = charts.value.find((x) => x.id === id)
-  if (c) c.expanded = !c.expanded
+  const index = charts.value.findIndex((x) => x.id === id)
+  const c = charts.value[index]
+  if (c) charts.value.splice(index, 1, { ...c, expanded: !c.expanded })
 }
 
 function updateChartFilters(id: string, filters: Record<string, string>) {
@@ -502,17 +522,25 @@ function normalizeConfig(config: any) {
     return matched?.id || categories.value[0]?.id || ''
   }
 
+  const seenChartIds = new Map<string, number>()
   charts.value = (config?.charts || []).map((chart: any, i: number) => {
     const preview = chart.preview || chart.tablePreview || { columns: [], rows: [] }
     const categoryId = findCategoryId(chart)
     const chartType = chart.chart_type || chart.chartType || chart.type || 'table'
+    const rawId = String(chart.id || `chart-${i}`)
+    const scopedId = `${categoryId || 'category'}-${rawId}`
+    const used = seenChartIds.get(scopedId) || 0
+    seenChartIds.set(scopedId, used + 1)
+    const renderKey = used === 0 ? scopedId : `${scopedId}-${used + 1}`
     return {
-      id: chart.id || `chart-${i}`,
+      id: rawId,
       categoryId,
       title: chart.title || '未命名图表',
       question: chart.question || chart.description || '',
       chartType,
       sql: chart.sql || '',
+      status: chart.status || 'completed',
+      errorMessage: chart.error_message || chart.errorMessage || '',
       onBoard: chart.on_board ?? chart.onBoard ?? true,
       collapsed: chart.collapsed ?? false,
       expanded: chart.expanded ?? [
@@ -554,6 +582,7 @@ function normalizeConfig(config: any) {
       },
       chartMock: chart.chartMock || buildChartMock(chartType, preview),
       comparison: chart.comparison || {},
+      renderKey,
     } as BIChartItem & { comparison?: Record<string, any> }
   })
 
@@ -597,6 +626,9 @@ function formatValue(value: any) {
 }
 
 async function refreshChartData(chart: BIChartItem) {
+  if ((chart as any).status === 'failed' || !chart.sql) {
+    return
+  }
   if (demoMode.value) {
     const source = (chart as any).sourceTablePreview || chart.tablePreview
     const filters = {
@@ -1076,6 +1108,10 @@ watch(
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   align-content: start;
+}
+
+.chart-grid--hidden {
+  display: none;
 }
 
 .chart-grid__item {

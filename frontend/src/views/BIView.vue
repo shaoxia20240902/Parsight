@@ -1,6 +1,6 @@
 <template>
   <div class="bi-view">
-    <BIDashboard v-if="fileId" :file-id="fileId" />
+    <BIDashboard v-if="fileId" :file-id="fileId" :data-ready="dataReady" />
 
     <div v-else-if="showDemoBoard" class="bi-demo">
       <div class="bi-demo__notice">
@@ -19,7 +19,7 @@
               当前展示演示数据
             </p>
             <p class="bi-demo__callout-desc">
-              基于企业销售数据样例生成，上传并完成表理解后可使用 AI 全局构建真实看板。
+              数据文件未上传、表理解未完成或关联总结未就绪时，BI 模块默认展示企业销售样例看板。
             </p>
           </div>
         </div>
@@ -63,6 +63,7 @@ const errorMessage = ref('')
 const checked = ref(false)
 const blocked = ref(false)
 const showDemoBoard = ref(false)
+const dataReady = ref(false)
 const demoConfig = createDemoBIConfig()
 
 function goToData() {
@@ -76,6 +77,7 @@ async function loadBI() {
   fileId.value = ''
   blocked.value = false
   showDemoBoard.value = false
+  dataReady.value = false
 
   try {
     const spaceId = localStorage.getItem(SPACE_KEY) || ''
@@ -89,14 +91,27 @@ async function loadBI() {
       return
     }
 
-    fileId.value = latest.id
-    const statusRes = await getBIStatus(latest.id)
-    if (statusRes.data.data?.status === 'blocked') {
-      fileId.value = ''
-      blocked.value = true
+    const isUnderstandingReady = latest.status === 'analyzed' || latest.status === 'understanding_ready'
+    if (!isUnderstandingReady) {
+      showDemoBoard.value = true
+      return
+    }
+
+    try {
+      const statusRes = await getBIStatus(latest.id)
+      if (statusRes.data.data?.status === 'blocked') {
+        showDemoBoard.value = true
+        return
+      }
+      dataReady.value = true
+      fileId.value = latest.id
+    } catch {
+      dataReady.value = true
+      fileId.value = latest.id
     }
   } catch (e: any) {
-    errorMessage.value = e.response?.data?.detail || e.message || '无法加载'
+    showDemoBoard.value = true
+    errorMessage.value = e.response?.data?.detail || e.message || ''
   } finally {
     loading.value = false
     checked.value = true

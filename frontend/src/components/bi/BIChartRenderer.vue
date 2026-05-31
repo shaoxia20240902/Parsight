@@ -1,58 +1,60 @@
 <template>
-  <div
-    v-if="chart.chartType === 'kpi_group' || chart.chartType === 'kpi'"
-    class="kpi-group"
-    :class="{ 'kpi-group--expanded': expanded }"
-  >
+  <div class="bi-chart-renderer-shell">
     <div
-      v-for="(item, index) in kpiItems"
-      :key="`${item.value_field}-${index}`"
-      class="kpi-item"
+      v-show="isKpiChart"
+      class="kpi-group"
+      :class="{ 'kpi-group--expanded': expanded }"
     >
-      <div class="kpi-item__actions">
-        <button type="button" title="左移" :disabled="index === 0" @click="moveItem(index, -1)">
-          <el-icon><ArrowLeft /></el-icon>
-        </button>
-        <button type="button" title="右移" :disabled="index === kpiItems.length - 1" @click="moveItem(index, 1)">
-          <el-icon><ArrowRight /></el-icon>
-        </button>
-        <button type="button" title="编辑" @click="editItem(index)">
-          <el-icon><Edit /></el-icon>
-        </button>
-        <button type="button" title="删除" @click="deleteItem(index)">
-          <el-icon><Delete /></el-icon>
-        </button>
+      <div
+        v-for="(item, index) in kpiItems"
+        :key="`${kpiItemField(item, index)}-${index}`"
+        class="kpi-item"
+      >
+        <div class="kpi-item__actions">
+          <button type="button" title="左移" :disabled="index === 0" @click="moveItem(index, -1)">
+            <el-icon><ArrowLeft /></el-icon>
+          </button>
+          <button type="button" title="右移" :disabled="index === kpiItems.length - 1" @click="moveItem(index, 1)">
+            <el-icon><ArrowRight /></el-icon>
+          </button>
+          <button type="button" title="编辑" @click="editItem(index)">
+            <el-icon><Edit /></el-icon>
+          </button>
+          <button type="button" title="删除" @click="deleteItem(index)">
+            <el-icon><Delete /></el-icon>
+          </button>
+        </div>
+        <span class="kpi-item__label">{{ item.label }}</span>
+        <strong class="kpi-item__value">{{ formatValue(kpiValue(item, index), item.format) }}</strong>
       </div>
-      <span class="kpi-item__label">{{ item.label }}</span>
-      <strong class="kpi-item__value">{{ formatValue(kpiValue(item), item.format) }}</strong>
     </div>
-  </div>
 
-  <div
-    v-else-if="chart.chartType === 'gauge'"
-    class="progress-chart"
-    :class="{ 'progress-chart--expanded': expanded }"
-  >
-    <div class="progress-chart__head">
-      <span class="progress-chart__label">{{ progressLabel }}</span>
-      <strong class="progress-chart__value">{{ progressDisplay }}</strong>
+    <div
+      v-show="isGaugeChart"
+      class="progress-chart"
+      :class="{ 'progress-chart--expanded': expanded }"
+    >
+      <div class="progress-chart__head">
+        <span class="progress-chart__label">{{ progressLabel }}</span>
+        <strong class="progress-chart__value">{{ progressDisplay }}</strong>
+      </div>
+      <div class="progress-chart__track" role="progressbar" :aria-valuenow="progressPercent" aria-valuemin="0" aria-valuemax="100">
+        <span class="progress-chart__fill" :style="{ width: `${progressPercent}%` }" />
+      </div>
+      <div class="progress-chart__meta">
+        <span>0%</span>
+        <span>目标 100%</span>
+      </div>
+      <p v-if="progressStatus" class="progress-chart__status">{{ progressStatus }}</p>
     </div>
-    <div class="progress-chart__track" role="progressbar" :aria-valuenow="progressPercent" aria-valuemin="0" aria-valuemax="100">
-      <span class="progress-chart__fill" :style="{ width: `${progressPercent}%` }" />
-    </div>
-    <div class="progress-chart__meta">
-      <span>0%</span>
-      <span>目标 100%</span>
-    </div>
-    <p v-if="progressStatus" class="progress-chart__status">{{ progressStatus }}</p>
-  </div>
 
-  <div
-    v-else
-    ref="chartRef"
-    class="chart-renderer"
-    :class="[`chart-renderer--${chart.chartType}`, { 'chart-renderer--expanded': expanded }]"
-  />
+    <div
+      v-show="isEChart"
+      ref="chartRef"
+      class="chart-renderer"
+      :class="[`chart-renderer--${chart.chartType}`, { 'chart-renderer--expanded': expanded }]"
+    />
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -78,22 +80,47 @@ let resizeObserver: ResizeObserver | null = null
 const rows = computed(() => props.chart.tablePreview?.rows || [])
 const columns = computed(() => props.chart.tablePreview?.columns || [])
 const expanded = computed(() => props.expanded === true)
+const isKpiChart = computed(() => props.chart.chartType === 'kpi_group' || props.chart.chartType === 'kpi')
+const isGaugeChart = computed(() => props.chart.chartType === 'gauge')
+const isEChart = computed(() =>
+  !['kpi_group', 'kpi', 'gauge', 'table', 'detail_table'].includes(props.chart.chartType)
+)
 
-const kpiItems = computed(() => {
-  if (props.chart.items?.length) return props.chart.items
+type KpiItem = { label?: string; value_field?: string; valueField?: string; field?: string; key?: string; format?: string }
+type EmittedKpiItem = { label: string; value_field: string; format?: string }
+
+const kpiItems = computed<KpiItem[]>(() => {
+  if (props.chart.items?.length) return props.chart.items as KpiItem[]
   if (props.chart.chartType === 'kpi') {
     return [{ label: props.chart.title, value_field: columns.value[0] || 'value', format: 'number' }]
   }
   return columns.value.slice(0, 5).map((col) => ({ label: col, value_field: col, format: inferFormat(col) }))
 })
 
-function kpiValue(item: { value_field: string }) {
+function kpiItemField(item: KpiItem, index = 0) {
+  return item.value_field || item.valueField || item.field || item.key || columns.value[index] || columns.value[0] || ''
+}
+
+function kpiValue(item: KpiItem, index = 0) {
   const row = rows.value[0] || {}
-  return row[item.value_field] ?? row[item.value_field.replace(/^总/, '')] ?? props.chart.chartMock?.kpiValue
+  const field = kpiItemField(item, index)
+  if (!field) return props.chart.chartMock?.kpiValue
+  return row[field] ?? row[field.replace(/^总/, '')] ?? props.chart.chartMock?.kpiValue
 }
 
 function cloneItems() {
   return kpiItems.value.map((item) => ({ ...item }))
+}
+
+function normalizeKpiItemsForEmit(items: KpiItem[]): EmittedKpiItem[] {
+  return items.map((item, index) => {
+    const field = kpiItemField(item, index) || `value_${index + 1}`
+    return {
+      label: item.label || field,
+      value_field: field,
+      format: item.format,
+    }
+  })
 }
 
 function moveItem(index: number, delta: number) {
@@ -102,13 +129,13 @@ function moveItem(index: number, delta: number) {
   if (target < 0 || target >= items.length) return
   const [item] = items.splice(index, 1)
   items.splice(target, 0, item)
-  emit('update-kpi-items', items)
+  emit('update-kpi-items', normalizeKpiItemsForEmit(items))
 }
 
 function deleteItem(index: number) {
   const items = cloneItems()
   items.splice(index, 1)
-  emit('update-kpi-items', items)
+  emit('update-kpi-items', normalizeKpiItemsForEmit(items))
 }
 
 function editItem(index: number) {
@@ -117,7 +144,7 @@ function editItem(index: number) {
   const next = window.prompt('指标名称', current.label)
   if (!next?.trim()) return
   current.label = next.trim().slice(0, 24)
-  emit('update-kpi-items', items)
+  emit('update-kpi-items', normalizeKpiItemsForEmit(items))
 }
 
 function inferFormat(label: string) {
@@ -363,7 +390,7 @@ function buildOption(): echarts.EChartsOption {
 }
 
 function initChart() {
-  if (!props.visible || !chartRef.value || ['kpi_group', 'kpi', 'gauge', 'table', 'detail_table'].includes(props.chart.chartType)) return
+  if (!props.visible || !chartRef.value || !isEChart.value) return
   instance?.dispose()
   instance = echarts.init(chartRef.value)
   instance.setOption(buildOption(), true)
@@ -413,6 +440,10 @@ defineExpose({ resizeChart: onResize })
 </script>
 
 <style scoped>
+.bi-chart-renderer-shell {
+  width: 100%;
+}
+
 .chart-renderer {
   width: 100%;
   height: 240px;

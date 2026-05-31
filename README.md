@@ -110,6 +110,8 @@ npm run build
 | [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) | 主开发文档：架构、API、数据模型、Agent |
 | [docs/BI_DASHBOARD_MODULE.md](./docs/BI_DASHBOARD_MODULE.md) | BI 看板专项：公共筛选、分类模型、并发生成流水线、提示词设计 |
 | [docs/INSIGHT_MODULE.md](./docs/INSIGHT_MODULE.md) | Chat 洞察/深度洞察：调用链、实施切片、待确认问题 |
+| [docs/PROJECT_VALUE.md](./docs/PROJECT_VALUE.md) | 项目价值、开源方向与工程范围 |
+| [docs/SECURITY_AND_API_USAGE.md](./docs/SECURITY_AND_API_USAGE.md) | Codex Security 需求与 API 额度使用计划 |
 | [docs/README.md](./docs/README.md) | 文档索引与维护约定 |
 
 代码变更时请同步更新对应文档。
@@ -144,4 +146,3 @@ Parsight 基于 **MIT License** 开源，欢迎自由使用、修改、分发和
 ## License
 
 本项目基于 [MIT License](./LICENSE) 开源。
-

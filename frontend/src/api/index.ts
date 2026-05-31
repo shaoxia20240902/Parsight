@@ -86,6 +86,7 @@ export type BIProgressEvent = {
   title?: string
   done_count?: number
   failed_count?: number
+  questions_count?: number
   table_name?: string
   type_counts?: Record<string, number>
   generation_started_at?: string
@@ -94,6 +95,7 @@ export type BIProgressEvent = {
   categories?: Array<Record<string, any>>
   global_filters?: Array<Record<string, any>>
   chart_plan?: Array<Record<string, any>>
+  chart?: Record<string, any>
   data?: unknown
   // SSE 流式 thinking entry
   entry?: BIThinkingEntry
@@ -166,6 +168,8 @@ export type BIThinkingEntry = {
   level: string
   text: string
   run_id?: string
+  category_id?: string
+  category_name?: string
   sheet_name?: string
   table_name?: string
   role_name?: string

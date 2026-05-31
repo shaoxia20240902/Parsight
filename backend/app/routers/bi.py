@@ -7,7 +7,8 @@ import json
 import logging
 import re
 import traceback
-from datetime import datetime
+import uuid
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
@@ -17,15 +18,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.database import async_session, get_db
 from app.services.db_service import DBService
 from app.agents.bi_agent import BIClassificationAgent
-from app.services.bi_generation import BIBusinessGenerator, UnderstandingNotReadyError
+from app.services.bi_generation import UnderstandingNotReadyError
+from app.services.bi_mvp_generation import BILlmMVPGenerator
 from app.services.bi_understanding_gate import check_understanding_ready, understanding_gate_http_detail
 from app.services.bi_profiler import quote_ident
 from app.services.bi_pipeline_logger import (
     BIPipelineRunContext,
+    STEP_GENERATE_END,
+    STEP_GENERATE_START,
     STEP_REPAIR,
     STEP_SQL_PREVIEW,
     log_step_error,
     log_step_ok,
+    log_step_warn,
 )
 from app.services.db_service import _json_default, json_safe
 from app.utils.sql_validator import SQLValidator
@@ -37,6 +42,43 @@ router = APIRouter(prefix="/api/bi", tags=["bi"])
 # 全局 BI 智能体实例
 bi_agent = BIClassificationAgent()
 _generation_locks: Dict[str, asyncio.Lock] = {}
+_generation_jobs: Dict[str, "BIGenerationJob"] = {}
+GENERATION_STALE_AFTER = timedelta(minutes=30)
+
+
+class BIGenerationJob:
+    def __init__(self, file_id: str):
+        self.file_id = file_id
+        self.generation_id = str(uuid.uuid4())
+        self.started_at = datetime.utcnow()
+        self.history: List[Dict[str, Any]] = []
+        self.subscribers: List[asyncio.Queue[Optional[Dict[str, Any]]]] = []
+        self.done = asyncio.Event()
+        self.task: Optional[asyncio.Task] = None
+
+    async def publish(self, event: Dict[str, Any]) -> None:
+        payload = json_safe({
+            "generation_id": self.generation_id,
+            "server_time": _utc_iso(datetime.utcnow()),
+            **event,
+        })
+        self.history.append(payload)
+        for queue in list(self.subscribers):
+            await queue.put(payload)
+
+    async def finish(self) -> None:
+        self.done.set()
+        for queue in list(self.subscribers):
+            await queue.put(None)
+
+    def subscribe(self) -> asyncio.Queue[Optional[Dict[str, Any]]]:
+        queue: asyncio.Queue[Optional[Dict[str, Any]]] = asyncio.Queue()
+        self.subscribers.append(queue)
+        return queue
+
+    def unsubscribe(self, queue: asyncio.Queue[Optional[Dict[str, Any]]]) -> None:
+        if queue in self.subscribers:
+            self.subscribers.remove(queue)
 
 
 def _utc_iso(value: Any) -> Optional[str]:
@@ -45,6 +87,47 @@ def _utc_iso(value: Any) -> Optional[str]:
     if isinstance(value, datetime):
         return value.isoformat(timespec="seconds") + "Z"
     return str(value)
+
+
+def _sse(event: Dict[str, Any]) -> str:
+    return f"data: {json.dumps(json_safe(event), ensure_ascii=False, default=_json_default)}\n\n"
+
+
+def _parse_jsonish(value: Any, default: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, str):
+                return json.loads(parsed)
+            return parsed
+        except json.JSONDecodeError:
+            return default
+    return value if value is not None else default
+
+
+def _sheet_metas_to_data(sheet_metas: List[Any]) -> List[Dict[str, Any]]:
+    sheets_data = []
+    for meta in sheet_metas:
+        sheets_data.append({
+            "sheet_name": meta.sheet_name,
+            "sheet_index": meta.sheet_index,
+            "table_name": meta.table_name,
+            "columns": _parse_jsonish(meta.columns, []),
+            "row_count": meta.row_count,
+            "summary": meta.summary or "",
+            "key_dimensions": _parse_jsonish(meta.key_dimensions, []) or [],
+            "key_metrics": _parse_jsonish(meta.key_metrics, []) or [],
+            "data_granularity": meta.data_granularity or "未知",
+            "time_range": meta.time_range or "未知",
+        })
+    return sheets_data
+
+
+def _is_stale_generation(status_info: Dict[str, Any]) -> bool:
+    started_at = status_info.get("generation_started_at")
+    if not isinstance(started_at, datetime):
+        return False
+    return datetime.utcnow() - started_at > GENERATION_STALE_AFTER
 
 
 class ChartDataRequest(BaseModel):
@@ -101,27 +184,52 @@ async def generate_bi_config(file_id: str, db: AsyncSession = Depends(get_db)):
     if not ready:
         raise HTTPException(status_code=409, detail=understanding_gate_http_detail(pending))
 
-    existing_status = await db_service.get_bi_status(file_id)
-    if existing_status == "generating":
-        raise HTTPException(status_code=409, detail="BI 看板正在生成中，请等待当前任务完成后再重新生成")
+    active_job = _generation_jobs.get(file_id)
+    if active_job and not active_job.done.is_set():
+        return StreamingResponse(
+            _stream_generation_job(active_job),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     lock = _generation_locks.setdefault(file_id, asyncio.Lock())
     if lock.locked():
+        active_job = _generation_jobs.get(file_id)
+        if active_job and not active_job.done.is_set():
+            return StreamingResponse(
+                _stream_generation_job(active_job),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
         raise HTTPException(status_code=409, detail="BI 看板正在生成中，请等待当前任务完成后再重新生成")
+
+    status_info = await db_service.get_bi_status_info(file_id)
+    existing_status = status_info.get("status")
+    if existing_status == "generating":
+        if not _is_stale_generation(status_info):
+            raise HTTPException(status_code=409, detail="BI 看板正在生成中，请等待当前任务完成后再重新生成")
+        logger.warning("检测到过期 BI 生成状态，允许重新生成: file_id=%s", file_id)
+        await db_service.update_bi_status(file_id, "failed")
 
     await lock.acquire()
     await db_service.update_bi_status(file_id, "generating")
+    await db_service.clear_bi_config(file_id)
     status_info = await db_service.get_bi_status_info(file_id)
-
-    async def event_generator():
-        try:
-            async for event in _generate_bi_events(file_id, file_record, sheet_metas, status_info):
-                yield event
-        finally:
-            lock.release()
+    sheets_data = _sheet_metas_to_data(sheet_metas)
+    job = BIGenerationJob(file_id)
+    _generation_jobs[file_id] = job
+    job.task = asyncio.create_task(_run_generation_job(job, file_id, file_record, sheets_data, status_info, lock))
 
     return StreamingResponse(
-        event_generator(),
+        _stream_generation_job(job),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -129,6 +237,163 @@ async def generate_bi_config(file_id: str, db: AsyncSession = Depends(get_db)):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+async def _stream_generation_job(job: BIGenerationJob):
+    queue = job.subscribe()
+    try:
+        for event in job.history:
+            yield _sse(event)
+        if job.done.is_set():
+            return
+        while True:
+            event = await queue.get()
+            if event is None:
+                break
+            yield _sse(event)
+    finally:
+        job.unsubscribe(queue)
+
+
+async def _run_generation_job(
+    job: BIGenerationJob,
+    file_id: str,
+    file_record: Any,
+    sheets_data: List[Dict[str, Any]],
+    status_info: Optional[Dict[str, Any]],
+    lock: asyncio.Lock,
+) -> None:
+    run_ctx = BIPipelineRunContext(file_id)
+    run_ctx.run_id = job.generation_id.replace("-", "")[:12]
+    try:
+        log_step_ok(
+            STEP_GENERATE_START,
+            "BI MVP 生成任务启动",
+            run_ctx,
+            extra={
+                "generation_id": job.generation_id,
+                "sheet_count": len(sheets_data),
+            },
+        )
+        async with async_session() as event_db:
+            db_service = DBService(event_db)
+            await db_service.clear_bi_thinking_journal(file_id)
+            generation_started_at = (status_info or {}).get("generation_started_at")
+            await job.publish({
+                "step": "bi_start",
+                "status": "processing",
+                "message": "正在准备 BI 生成任务",
+                "generation_started_at": _utc_iso(generation_started_at),
+            })
+            await job.publish({
+                "step": "bi_generating",
+                "status": "processing",
+                "message": "已读取表结构，开始生成看板方案",
+                "generation_started_at": _utc_iso(generation_started_at),
+            })
+
+            async def persist_thinking_entry(entry: Dict[str, Any]) -> None:
+                safe_entry = json_safe(entry)
+                async with async_session() as persist_db:
+                    await DBService(persist_db).append_bi_thinking_entry(file_id, safe_entry)
+                log_step_ok(
+                    "thinking",
+                    safe_entry.get("text") or "BI 生成思考过程",
+                    run_ctx,
+                    sheet_name=safe_entry.get("sheet_name"),
+                    table_name=safe_entry.get("table_name"),
+                    chart_id=safe_entry.get("chart_id"),
+                    extra={
+                        "category_id": safe_entry.get("category_id"),
+                        "category_name": safe_entry.get("category_name"),
+                        "journal_step": safe_entry.get("step"),
+                    },
+                )
+                await job.publish({"step": "thinking_entry", "status": "processing", "entry": safe_entry})
+
+            async def emit_progress(event: Dict[str, Any]) -> None:
+                level = "WARN" if event.get("status") == "failed" or event.get("step") == "chart_failed" else "INFO"
+                log_fn = log_step_warn if level == "WARN" else log_step_ok
+                log_fn(
+                    str(event.get("step") or "bi_progress"),
+                    str(event.get("message") or event.get("title") or "BI 生成进度事件"),
+                    run_ctx,
+                    table_name=event.get("table_name"),
+                    sheet_name=event.get("sheet_name"),
+                    chart_id=event.get("chart_id"),
+                    extra={
+                        "category_id": event.get("category_id"),
+                        "category_name": event.get("category_name"),
+                        "chart_type": event.get("chart_type"),
+                        "charts_count": event.get("charts_count"),
+                        "failed_count": event.get("failed_count"),
+                    },
+                )
+                await job.publish(event)
+
+            try:
+                bi_config = await BILlmMVPGenerator(db_service).generate(
+                    file_id,
+                    sheets_data,
+                    on_thinking_entry=persist_thinking_entry,
+                    on_progress_event=emit_progress,
+                )
+            except UnderstandingNotReadyError as e:
+                await db_service.update_bi_status(file_id, "failed")
+                await job.publish({
+                    "step": "error",
+                    "status": "error",
+                    "message": "表理解尚未完成",
+                    **understanding_gate_http_detail(e.pending_sheets),
+                })
+                return
+
+            thinking = bi_config.pop("thinking_journal", None)
+            if thinking:
+                await db_service.set_bi_thinking_journal(file_id, thinking)
+
+            bi_config = json_safe(bi_config)
+            await db_service.update_bi_config(file_id, bi_config)
+            await db_service.update_bi_status(file_id, "completed")
+            if file_record.status != "analyzed":
+                await db_service.update_file_status(file_id, "analyzed")
+
+            categories_count = len(bi_config.get("categories", [])) + len(bi_config.get("custom_categories", []))
+            charts_count = len(bi_config.get("charts", []))
+            report = bi_config.get("generation_report") or {}
+            await job.publish(json_safe({
+                "step": "bi_completed",
+                "status": "completed",
+                "categories_count": categories_count,
+                "charts_count": charts_count,
+                "failed_count": report.get("failed_chart_count", 0),
+                "data": bi_config,
+            }))
+            log_step_ok(
+                STEP_GENERATE_END,
+                "BI MVP 生成任务完成",
+                run_ctx,
+                extra={
+                    "categories_count": categories_count,
+                    "chart_count": charts_count,
+                    "failed_chart_count": report.get("failed_chart_count", 0),
+                    "prompt_version": report.get("prompt_version"),
+                },
+            )
+    except Exception as e:
+        error_detail = traceback.format_exc()
+        logger.error(f"BI生成错误: {error_detail}")
+        log_step_error("generate_failed", "BI MVP 生成任务失败", run_ctx, exc=e)
+        async with async_session() as error_db:
+            await DBService(error_db).update_bi_status(file_id, "failed")
+        await job.publish({"step": "error", "status": "error", "message": str(e)})
+    finally:
+        if lock.locked():
+            lock.release()
+        await job.finish()
+        current = _generation_jobs.get(file_id)
+        if current is job:
+            _generation_jobs.pop(file_id, None)
 
 
 async def _generate_bi_events(
@@ -203,7 +468,7 @@ async def _generate_bi_events(
                 await progress_queue.put(json_safe(event))
 
             generation_task = asyncio.create_task(
-                BIBusinessGenerator(db_service).generate(
+                BILlmMVPGenerator(db_service).generate(
                     file_id,
                     sheets_data,
                     on_thinking_entry=persist_thinking_entry,

@@ -25,7 +25,10 @@
         :title="chart.collapsed ? '展开' : '收起'"
         @click="$emit('toggle-collapse', chart.id)"
       >
-        <el-icon><component :is="chart.collapsed ? ArrowDown : ArrowUp" /></el-icon>
+        <el-icon>
+          <ArrowDown v-show="chart.collapsed" />
+          <ArrowUp v-show="!chart.collapsed" />
+        </el-icon>
       </button>
       <div class="chart-card__titles">
         <h3 class="chart-card__title">{{ chart.title }}</h3>
@@ -43,32 +46,30 @@
           >
             <el-icon><ChatDotRound /></el-icon>
           </button>
-          <transition name="bubble-fade">
-            <div v-if="chatOpen" class="chat-dialog" @click.stop>
-              <div class="chat-dialog__header">
-                <span class="chat-dialog__title">对话修改图表</span>
-                <button type="button" class="chat-dialog__close" aria-label="关闭" @click="chatOpen = false">
-                  <el-icon><Close /></el-icon>
-                </button>
-              </div>
-              <p class="chat-dialog__hint">
-                用自然语言描述你想如何调整本图，例如图表类型、维度拆分或样式偏好（Mock 演示，暂不请求后端）。
-              </p>
-              <textarea
-                ref="chatInputRef"
-                v-model="chatInput"
-                class="chat-dialog__input"
-                rows="3"
-                placeholder="例如：改成堆叠柱状图，按月份展示各区域销售额…"
-                @keydown.enter.exact.prevent="sendChat"
-              />
-              <div class="chat-dialog__footer">
-                <button type="button" class="chat-dialog__send" :disabled="!chatInput.trim()" @click="sendChat">
-                  发送
-                </button>
-              </div>
+          <div v-if="chatOpen" class="chat-dialog" @click.stop>
+            <div class="chat-dialog__header">
+              <span class="chat-dialog__title">对话修改图表</span>
+              <button type="button" class="chat-dialog__close" aria-label="关闭" @click="chatOpen = false">
+                <el-icon><Close /></el-icon>
+              </button>
             </div>
-          </transition>
+            <p class="chat-dialog__hint">
+              用自然语言描述你想如何调整本图，例如图表类型、维度拆分或样式偏好（Mock 演示，暂不请求后端）。
+            </p>
+            <textarea
+              ref="chatInputRef"
+              v-model="chatInput"
+              class="chat-dialog__input"
+              rows="3"
+              placeholder="例如：改成堆叠柱状图，按月份展示各区域销售额…"
+              @keydown.enter.exact.prevent="sendChat"
+            />
+            <div class="chat-dialog__footer">
+              <button type="button" class="chat-dialog__send" :disabled="!chatInput.trim()" @click="sendChat">
+                发送
+              </button>
+            </div>
+          </div>
         </div>
 
         <div class="action-wrap">
@@ -110,7 +111,10 @@
             :title="chart.expanded ? '恢复半宽' : '通栏放大'"
             @click="$emit('toggle-expand', chart.id)"
           >
-            <el-icon><component :is="chart.expanded ? Crop : FullScreen" /></el-icon>
+            <el-icon>
+              <Crop v-show="chart.expanded" />
+              <FullScreen v-show="!chart.expanded" />
+            </el-icon>
           </button>
         </div>
 
@@ -123,15 +127,13 @@
           >
             <el-icon><Box /></el-icon>
           </button>
-          <transition name="bubble-fade">
-            <div v-if="activeBubble === 'warehouse'" class="action-bubble action-bubble--confirm">
-              <p>确认移入仓库？图表将从看板移除，仍保留在仓库中。</p>
-              <div class="bubble-actions">
-                <button type="button" class="bubble-btn" @click="activeBubble = null">取消</button>
-                <button type="button" class="bubble-btn bubble-btn--primary" @click="confirmWarehouse">确认</button>
-              </div>
+          <div v-if="activeBubble === 'warehouse'" class="action-bubble action-bubble--confirm">
+            <p>确认移入仓库？图表将从看板移除，仍保留在仓库中。</p>
+            <div class="bubble-actions">
+              <button type="button" class="bubble-btn" @click="activeBubble = null">取消</button>
+              <button type="button" class="bubble-btn bubble-btn--primary" @click="confirmWarehouse">确认</button>
             </div>
-          </transition>
+          </div>
         </div>
       </div>
     </header>
@@ -696,13 +698,4 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   color: var(--bi-muted);
 }
 
-.bubble-fade-enter-active,
-.bubble-fade-leave-active {
-  transition: opacity 0.15s ease, transform 0.15s ease;
-}
-.bubble-fade-enter-from,
-.bubble-fade-leave-to {
-  opacity: 0;
-  transform: translateY(-4px);
-}
 </style>

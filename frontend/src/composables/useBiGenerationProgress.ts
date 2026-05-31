@@ -6,6 +6,10 @@ export type BIGenChartStatus = 'waiting' | 'planning' | 'processing' | 'complete
 export type BIGenCategoryState = {
   id: string
   name: string
+  source?: string
+  description?: string
+  tableName?: string
+  relatedTables?: string[]
   total: number
   done: number
   failed: boolean
@@ -15,10 +19,12 @@ export type BIGenCategoryState = {
 export type BIGenPlannedChart = {
   id: string
   title: string
+  question?: string
   chart_type: string
   category_id: string
   status: BIGenChartStatus
   message?: string
+  chart?: Record<string, any>
 }
 
 function displayName(name?: string) {
@@ -66,13 +72,26 @@ export function useBiGenerationProgress(eventsRef: Ref<BIProgressEvent[]>) {
     return found?.chart_plan || []
   })
 
-  const chartStateById = computed<Record<string, { status: BIGenChartStatus; message?: string }>>(() => {
-    const map: Record<string, { status: BIGenChartStatus; message?: string }> = {}
+  const chartStateById = computed<Record<string, { status: BIGenChartStatus; message?: string; chart?: Record<string, any>; chart_type?: string }>>(() => {
+    const map: Record<string, { status: BIGenChartStatus; message?: string; chart?: Record<string, any>; chart_type?: string }> = {}
     for (const event of events.value) {
       if (!event.chart_id) continue
       if (event.step === 'chart_start') map[event.chart_id] = { status: 'processing' }
-      if (event.step === 'chart_done') map[event.chart_id] = { status: 'completed' }
-      if (event.step === 'chart_failed') map[event.chart_id] = { status: 'failed', message: event.message }
+      if (event.step === 'chart_done') {
+        map[event.chart_id] = {
+          status: 'completed',
+          chart: event.chart,
+          chart_type: event.chart_type || event.chart?.chart_type || event.chart?.chartType,
+        }
+      }
+      if (event.step === 'chart_failed') {
+        map[event.chart_id] = {
+          status: 'failed',
+          message: event.message,
+          chart: event.chart,
+          chart_type: event.chart_type || event.chart?.chart_type || event.chart?.chartType,
+        }
+      }
     }
     return map
   })
@@ -82,10 +101,12 @@ export function useBiGenerationProgress(eventsRef: Ref<BIProgressEvent[]>) {
       (plan.charts || []).map((chart: any) => ({
         id: chart.id,
         title: chart.title || '未命名图表',
-        chart_type: chart.chart_type || 'table',
+        question: chart.question || chart.description || '',
+        chart_type: chartStateById.value[chart.id]?.chart_type || chart.chart_type || 'table',
         category_id: chart.category_id || plan.category_id,
         status: chartStateById.value[chart.id]?.status || 'waiting',
         message: chartStateById.value[chart.id]?.message,
+        chart: chartStateById.value[chart.id]?.chart,
       }))
     )
   )
@@ -96,11 +117,19 @@ export function useBiGenerationProgress(eventsRef: Ref<BIProgressEvent[]>) {
       ? plans.map((plan: any) => ({
           id: plan.category_id,
           name: plan.category_name,
+          source: plan.source,
+          description: plan.description,
+          tableName: plan.table_name || plan.primary_table_name,
+          relatedTables: Array.isArray(plan.related_tables) ? plan.related_tables : [],
           total: plan.charts_count || (plan.charts || []).length,
         }))
       : latestCategoriesPayload.value.map((cat: any) => ({
           id: cat.id || cat.category_id,
           name: cat.display_name || cat.name,
+          source: cat.source,
+          description: cat.description,
+          tableName: cat.table_name || cat.primary_table_name,
+          relatedTables: Array.isArray(cat.related_tables) ? cat.related_tables : [],
           total: 0,
         }))
 
@@ -133,6 +162,12 @@ export function useBiGenerationProgress(eventsRef: Ref<BIProgressEvent[]>) {
   const completedChartCount = computed(() =>
     Object.values(chartStateById.value).filter((item) => item.status === 'completed').length
   )
+
+  const failedChartCount = computed(() =>
+    Object.values(chartStateById.value).filter((item) => item.status === 'failed').length
+  )
+
+  const finishedChartCount = computed(() => completedChartCount.value + failedChartCount.value)
 
   const latestMessage = computed(() => {
     const last = events.value[events.value.length - 1]
@@ -170,6 +205,8 @@ export function useBiGenerationProgress(eventsRef: Ref<BIProgressEvent[]>) {
     chartsByCategory,
     totalChartCount,
     completedChartCount,
+    failedChartCount,
+    finishedChartCount,
     latestMessage,
     activePhaseIndex,
     displayName,

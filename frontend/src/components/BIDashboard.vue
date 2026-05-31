@@ -15,19 +15,19 @@
           type="primary"
           :icon="'Refresh'"
           size="small"
-          @click="usingDemo ? startAIFromChoice() : regenerateBI()"
+          @click="startAIFromChoice"
           :loading="generating"
         >
-          {{ usingDemo ? 'AI 全局构建' : '重新生成' }}
+          {{ biConfig || biStatus === 'completed' ? '重新 AI 构建' : 'AI 构建' }}
         </el-button>
       </div>
     </div>
 
     <template v-if="generating">
       <BIGeneratingExperience
-        v-if="biError || generationView === 'planning'"
+        v-if="biError"
         :file-id="fileId"
-        :active="!biError && generationView === 'planning'"
+        :active="false"
         :error="biError || undefined"
         :events="progressEvents"
         :generation-started-at="generationStartedAt || undefined"
@@ -56,12 +56,12 @@
           {{ biStatus === 'failed' ? '上次生成未完成' : '准备生成看板' }}
         </h2>
         <p class="bi-setup__desc">
-          表理解已完成。点击开始后，将依次规划分类、确定图表与公共筛选项，并按分类执行每个图表。
+          表理解与关联总结已完成。点击开始后，将先生成分类与公共筛选，再进入看板逐步生成问题、图表类型与 SQL。
         </p>
         <div class="bi-setup__steps" aria-label="生成步骤">
-          <span>分类</span>
-          <span>图表方案</span>
-          <span>逐类执行</span>
+          <span>分类筛选</span>
+          <span>问题定义</span>
+          <span>图表 SQL</span>
           <span>看板完成</span>
         </div>
         <button type="button" class="bi-setup__cta" :disabled="generationInFlight" @click="generateBI">
@@ -83,18 +83,18 @@
       <div v-if="choiceVisible" class="bi-choice" role="dialog" aria-modal="true" aria-labelledby="bi-choice-title">
         <div class="bi-choice__panel">
           <p class="bi-choice__eyebrow">BI 智能看板</p>
-          <h3 id="bi-choice-title" class="bi-choice__title">选择本次查看方式</h3>
+          <h3 id="bi-choice-title" class="bi-choice__title">数据理解已完成</h3>
           <p class="bi-choice__desc">
-            表理解已完成。你可以先查看内置演示看板，也可以直接让 AI 基于当前文件完成全局构建。
+            当前空间的表理解和关联总结已就绪。你可以重新 AI 构建看板，或继续查看当前 Mock 数据。
           </p>
           <div class="bi-choice__cards">
             <button type="button" class="bi-choice__card" @click="showDemoFromChoice">
-              <span class="bi-choice__card-title">查看演示数据</span>
-              <span class="bi-choice__card-desc">打开 8 个分类、64 张图表的销售样例看板。</span>
+              <span class="bi-choice__card-title">继续查看 Mock 数据</span>
+              <span class="bi-choice__card-desc">保留当前 8 个分类、64 张图表的销售样例看板。</span>
             </button>
             <button type="button" class="bi-choice__card bi-choice__card--primary" @click="startAIFromChoice">
-              <span class="bi-choice__card-title">AI 全局构建</span>
-              <span class="bi-choice__card-desc">按分类规划、图表方案、逐图执行生成真实看板。</span>
+              <span class="bi-choice__card-title">重新 AI 构建</span>
+              <span class="bi-choice__card-desc">按“分类筛选、问题定义、图表 SQL、逐图完成”模拟生成流程。</span>
             </button>
           </div>
         </div>
@@ -110,12 +110,12 @@ import type { BIProgressEvent, BIStatus } from '../api'
 import BIGeneratingExperience from './BIGeneratingExperience.vue'
 import BIStagedGeneratingBoard from './bi/BIStagedGeneratingBoard.vue'
 import BIInsightsBoard from './bi/BIInsightsBoard.vue'
-import { useBiGenerationProgress } from '../composables/useBiGenerationProgress'
 import { createDemoBIConfig } from '../mocks/demoBIConfig'
 
 // ============ Props ============
 const props = defineProps<{
   fileId: string
+  dataReady?: boolean
 }>()
 
 // ============ State ============
@@ -127,16 +127,19 @@ const biStatus = ref<BIStatus>('none')
 const generationInFlight = ref(false)
 const progressEvents = ref<BIProgressEvent[]>([])
 const generationStartedAt = ref('')
-const usingDemo = ref(false)
+const usingDemo = ref(true)
 const choiceVisible = ref(false)
 const choicePromptShown = ref(false)
 const demoConfig = createDemoBIConfig()
+const frontendMockBuild = false
+const MOCK_STAGE_MS = 30000
 
 // 全局筛选
 const globalFilters = reactive<Record<string, any>>({})
 const filterOptions = ref<Array<{ field: string; type: string; sample_values: string[] }>>([])
 
 let statusPollTimer: ReturnType<typeof setInterval> | null = null
+let mockBuildTimers: Array<ReturnType<typeof setTimeout>> = []
 
 // ============ Computed ============
 const activeConfig = computed(() => usingDemo.value ? demoConfig : biConfig.value)
@@ -152,13 +155,12 @@ const insightsConfig = computed(() => ({
     : filterOptions.value
 }))
 
-const { generationView } = useBiGenerationProgress(progressEvents)
-
 // ============ 数据加载 ============
 const loadBIConfig = async () => {
   try {
     const res = await getBIConfig(props.fileId)
     biConfig.value = res.data.data
+    usingDemo.value = false
 
     if (biConfig.value?.categories?.length > 0 && !activeCategory.value) {
       activeCategory.value = biConfig.value.categories[0].name
@@ -190,10 +192,9 @@ const checkBIStatus = async () => {
     generationStartedAt.value = statusData?.generation_started_at || ''
 
     if (status === 'completed') {
-      // 已完成，直接加载配置
+      // 已完成，直接加载落库配置
       stopStatusPoll()
       await loadBIConfig()
-      openReadyChoice()
     } else if (status === 'generating') {
       // 正在生成中，显示加载态并轮询
       generating.value = true
@@ -232,11 +233,149 @@ function startAIFromChoice() {
   if (generationInFlight.value) return
   choiceVisible.value = false
   usingDemo.value = false
+  if (frontendMockBuild) {
+    runMockGenerate()
+    return
+  }
   if (biConfig.value || biStatus.value === 'completed') {
     regenerateBI()
   } else {
     generateBI()
   }
+}
+
+function queueMockEvent(delay: number, event: BIProgressEvent) {
+  const timer = setTimeout(() => {
+    progressEvents.value = [...progressEvents.value, event]
+    if (event.generation_started_at) generationStartedAt.value = event.generation_started_at
+  }, delay)
+  mockBuildTimers.push(timer)
+}
+
+function clearMockBuildTimers() {
+  mockBuildTimers.forEach((timer) => clearTimeout(timer))
+  mockBuildTimers = []
+}
+
+function runMockGenerate() {
+  if (generationInFlight.value) return
+  clearMockBuildTimers()
+  stopStatusPoll()
+  generationInFlight.value = true
+  generating.value = true
+  biError.value = ''
+  biConfig.value = null
+  progressEvents.value = []
+  generationStartedAt.value = new Date().toISOString()
+
+  const categories = [
+    ...(demoConfig.categories || []),
+    ...(demoConfig.custom_categories || [])
+  ].map((cat: any) => ({
+    id: cat.id,
+    name: cat.name,
+    display_name: cat.display_name || cat.name,
+    source: cat.source,
+  }))
+  const chartPlan = categories.map((cat: any) => {
+    const charts = (demoConfig.charts || [])
+      .filter((chart: any) => (chart.category_id || chart.categoryId) === cat.id)
+      .map((chart: any) => ({
+        id: chart.id,
+        title: chart.title,
+        chart_type: chart.chart_type || chart.chartType,
+        category_id: cat.id,
+      }))
+    return {
+      category_id: cat.id,
+      category_name: cat.name,
+      charts_count: charts.length,
+      charts,
+      type_counts: charts.reduce((acc: Record<string, number>, chart: any) => {
+        acc[chart.chart_type] = (acc[chart.chart_type] || 0) + 1
+        return acc
+      }, {})
+    }
+  })
+
+  queueMockEvent(0, {
+    step: 'generation_start',
+    message: '正在阅读上传的 Excel 文件，识别可分析的数据表。',
+    generation_started_at: generationStartedAt.value,
+  })
+  queueMockEvent(1200, {
+    step: 'thinking_entry',
+    message: '识别 Sheet 与字段语义',
+    entry: {
+      id: 'mock-think-1',
+      ts: new Date().toISOString(),
+      step: 'category',
+      level: 'info',
+      text: '正在根据销售明细、销售员信息、产品信息、区域目标、客户信息生成看板分类，并抽取区域、产品类别、客户等级作为公共筛选参数。'
+    }
+  })
+  queueMockEvent(MOCK_STAGE_MS, {
+    step: 'categories_ready',
+    message: '分类和公共筛选参数已生成，进入看板规划。',
+    categories,
+    global_filters: demoConfig.global_filters,
+    categories_count: categories.length,
+  })
+  queueMockEvent(MOCK_STAGE_MS + 1200, {
+    step: 'thinking_entry',
+    message: '正在为当前分类定义问题',
+    category_id: categories[0]?.id,
+    category_name: categories[0]?.name,
+    entry: {
+      id: 'mock-think-2',
+      ts: new Date().toISOString(),
+      step: 'question_plan',
+      level: 'info',
+      text: '先确定每个分类下应该回答哪些经营问题，例如销售规模是否健康、区域贡献是否均衡、月度趋势是否持续增长，并为每个问题生成清晰名称。'
+    }
+  })
+  queueMockEvent(MOCK_STAGE_MS * 2, {
+    step: 'chart_plan_ready',
+    message: '问题清单已确定，开始并行判断图表类型与 SQL。',
+    chart_plan: chartPlan,
+    charts_count: demoConfig.charts.length,
+  })
+
+  const visibleCharts = (demoConfig.charts || []).slice(0, 10)
+  const chartStepMs = Math.floor(MOCK_STAGE_MS / Math.max(visibleCharts.length, 1))
+  visibleCharts.forEach((chart: any, index: number) => {
+    const startDelay = MOCK_STAGE_MS * 2 + 1200 + index * chartStepMs
+    queueMockEvent(startDelay, {
+      step: 'chart_start',
+      message: `正在为「${chart.title}」选择图表类型并生成 SQL。`,
+      chart_id: chart.id,
+      category_id: chart.category_id || chart.categoryId,
+      title: chart.title,
+      chart_type: chart.chart_type || chart.chartType,
+    })
+    queueMockEvent(startDelay + Math.min(1800, Math.floor(chartStepMs * 0.6)), {
+      step: 'chart_done',
+      message: `「${chart.title}」已完成。`,
+      chart_id: chart.id,
+      category_id: chart.category_id || chart.categoryId,
+      title: chart.title,
+      chart_type: chart.chart_type || chart.chartType,
+    })
+  })
+
+  const finishDelay = MOCK_STAGE_MS * 3
+  queueMockEvent(finishDelay, {
+    step: 'bi_completed',
+    message: '看板构建完成。',
+    data: demoConfig,
+    generation_finished_at: new Date(Date.now() + finishDelay).toISOString(),
+  })
+  const doneTimer = setTimeout(() => {
+    biConfig.value = demoConfig
+    generationInFlight.value = false
+    generating.value = false
+  }, finishDelay + 700)
+  mockBuildTimers.push(doneTimer)
 }
 
 const generateBI = async () => {
@@ -278,6 +417,10 @@ const generateBI = async () => {
 
 const regenerateBI = () => {
   if (generationInFlight.value) return
+  if (frontendMockBuild) {
+    runMockGenerate()
+    return
+  }
   biConfig.value = null
   activeCategory.value = ''
   stopStatusPoll()
@@ -288,7 +431,8 @@ const retryGenerate = () => {
   if (generationInFlight.value) return
   biError.value = ''
   stopStatusPoll()
-  generateBI()
+  if (frontendMockBuild) runMockGenerate()
+  else generateBI()
 }
 
 // ============ 状态轮询 ============
@@ -326,13 +470,17 @@ function stopStatusPoll() {
 
 // ============ Lifecycle ============
 onMounted(() => {
+  usingDemo.value = true
   if (props.fileId) {
     checkBIStatus()
+  } else if (props.dataReady) {
+    openReadyChoice()
   }
 })
 
 onUnmounted(() => {
   stopStatusPoll()
+  clearMockBuildTimers()
 })
 
 watch(
@@ -346,11 +494,12 @@ watch(
       generationInFlight.value = false
       progressEvents.value = []
       generationStartedAt.value = ''
-      usingDemo.value = false
+      usingDemo.value = true
       choiceVisible.value = false
       choicePromptShown.value = false
       Object.keys(globalFilters).forEach(k => delete globalFilters[k])
       stopStatusPoll()
+      clearMockBuildTimers()
       checkBIStatus()
     }
   }
