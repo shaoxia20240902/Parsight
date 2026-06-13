@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="Parsight / 析见 — 上传 Excel，AI 自动理解数据、关联多表并生成 BI 看板与自然语言问答。" />
-  <title>Parsight · 数据洞察</title>
+  <title>Parsight · 把 Excel 变成会说话的 BI 看板</title>
   <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
   <link rel="stylesheet" href="./assets/style.css" />
 </head>
@@ -16,137 +16,303 @@
         <span>Parsight</span>
       </a>
       <div class="nav-links">
-        <a class="nav-link" href="#features">能力</a>
-        <a class="nav-link" href="#quickstart">快速开始</a>
-        <a class="nav-link" href="./README.md">文档</a>
-        <a class="nav-link nav-link--primary" href="https://github.com/shaoxia20240902/Parsight" target="_blank" rel="noopener">GitHub</a>
+        <a class="nav-link" href="#values">能力</a>
+        <a class="nav-link" href="#cases">场景</a>
+        <a class="nav-link" href="#preview">产品预览</a>
+        <a class="nav-link" href="#start">快速开始</a>
+        <a class="nav-link nav-link--accent" href="https://github.com/shaoxia20240902/Parsight" target="_blank" rel="noopener">GitHub</a>
       </div>
     </div>
   </nav>
 
   <header class="hero">
-    <div class="container">
-      <img class="hero-logo" src="./assets/logo-full.svg" alt="Parsight" />
-      <h1 class="hero-title">Parsight <span>/ 析见</span></h1>
-      <p class="hero-desc">
-        面向 XLSX 数据分析的智能 BI 应用。上传 Excel 后，AI 自动完成单表理解、跨表关联、看板生成与自然语言问答。
-      </p>
-      <div class="hero-actions">
-        <a class="btn btn--primary" href="https://github.com/shaoxia20240902/Parsight" target="_blank" rel="noopener">
-          查看源码
-        </a>
-        <a class="btn btn--secondary" href="#quickstart">快速开始</a>
+    <div class="hero-bg">
+      <div class="hero-blob hero-blob--1"></div>
+      <div class="hero-blob hero-blob--2"></div>
+    </div>
+    <div class="container hero-grid">
+      <div class="hero-copy">
+        <span class="hero-badge">AI 驱动的 Excel 数据分析</span>
+        <h1 class="hero-title">把 Excel 变成<br /><em>会说话的 BI 看板</em></h1>
+        <p class="hero-desc">
+          上传表格，AI 自动理解业务含义、发现多表关联、生成图表与报告。销售、运营、财务团队无需 SQL、无需数据仓库，像聊天一样直接追问数据。
+        </p>
+        <div class="hero-actions">
+          <a class="btn btn--primary" href="#start">5 分钟快速开始</a>
+          <a class="btn btn--secondary" href="https://github.com/shaoxia20240902/Parsight" target="_blank" rel="noopener">
+            在 GitHub 查看
+          </a>
+        </div>
+        <p class="hero-note">已开源 MIT 协议 · 支持 FastAPI + Vue 3 · 可私有化部署</p>
+      </div>
+      <div class="hero-visual">
+        <div class="hero-card">
+          <img src="./assets/preview-bi.svg" alt="Parsight BI 看板预览" />
+        </div>
       </div>
     </div>
   </header>
 
-  <section id="features" class="section section--white">
+  <section class="painpoints">
     <div class="container">
-      <h2 class="section-title">核心能力</h2>
-      <p class="section-subtitle">从原始表格到可用洞察，Parsight 让数据分析不再依赖手动建模。</p>
-      <div class="feature-grid">
-        <div class="feature-card">
-          <div class="feature-icon">1</div>
-          <h3 class="feature-title">XLSX 上传与解析</h3>
-          <p class="feature-text">支持 .xlsx / .xls，自动识别 Sheet 结构、字段类型并写入 MySQL。</p>
+      <div class="painpoints-grid">
+        <div class="painpoint">
+          <strong>80%</strong>
+          <span>的业务分析时间耗在清洗、拼接和做表上</span>
         </div>
-        <div class="feature-card">
-          <div class="feature-icon">2</div>
-          <h3 class="feature-title">AI 单表理解</h3>
-          <p class="feature-text">六维理解业务含义，输出 Markdown 报告并支持异议核对与修正。</p>
+        <div class="painpoint">
+          <strong>无数张表</strong>
+          <span>散落在不同 Sheet，靠 VLOOKUP 硬关联容易出错</span>
         </div>
-        <div class="feature-card">
-          <div class="feature-icon">3</div>
-          <h3 class="feature-title">跨表关联分析</h3>
-          <p class="feature-text">在空间维度发现多表关联，生成可核对的 SQL 与关系说明。</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">4</div>
-          <h3 class="feature-title">自动 BI 看板</h3>
-          <p class="feature-text">基于理解结果自动推荐指标、维度与图表类型，生成可交互看板。</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">5</div>
-          <h3 class="feature-title">自然语言问答</h3>
-          <p class="feature-text">快速洞察、深度研究、BI Builder 三种模式，用提问代替写 SQL。</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">6</div>
-          <h3 class="feature-title">空间与后台管理</h3>
-          <p class="feature-text">多空间数据隔离、LLM 配置、用户与日志管理，适配团队使用。</p>
+        <div class="painpoint">
+          <strong>不会 SQL</strong>
+          <span>想看个趋势还得排队等数据工程师提需求</span>
         </div>
       </div>
     </div>
   </section>
 
-  <section class="section">
+  <section id="values" class="section section--surface">
     <div class="container">
-      <h2 class="section-title">三步获得洞察</h2>
-      <p class="section-subtitle">无需数据仓库，无需预先建模。</p>
-      <div class="workflow-steps">
+      <div class="section-head">
+        <span class="section-label">核心能力</span>
+        <h2 class="section-title">不只是做表，而是直接给出洞察</h2>
+        <p class="section-desc">Parsight 把传统 BI 的「建模 → 写 SQL → 搭看板」压缩成一步：上传 Excel，剩下的交给 AI。</p>
+      </div>
+
+      <div class="value-grid">
+        <div class="value-card">
+          <div class="value-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          </div>
+          <h3 class="value-title">上传即分析</h3>
+          <p class="value-text">支持 .xlsx / .xls，自动识别 Sheet 结构、字段类型并写入 MySQL，无需手写建表语句。</p>
+        </div>
+
+        <div class="value-card">
+          <div class="value-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+          </div>
+          <h3 class="value-title">AI 自动理解业务含义</h3>
+          <p class="value-text">对每张表进行六维业务理解，生成 Markdown 报告；发现理解偏差时可直接反馈修正。</p>
+        </div>
+
+        <div class="value-card">
+          <div class="value-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          </div>
+          <h3 class="value-title">自动发现跨表关联</h3>
+          <p class="value-text">在空间内自动分析多张 Excel 的关联关系，输出可执行的 SQL，业务人员也能核对。</p>
+        </div>
+
+        <div class="value-card">
+          <div class="value-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+          </div>
+          <h3 class="value-title">自动生成 BI 看板</h3>
+          <p class="value-text">基于理解结果自动推荐指标、维度与图表类型，生成 KPI、趋势、排名、占比等可交互图表。</p>
+        </div>
+
+        <div class="value-card">
+          <div class="value-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </div>
+          <h3 class="value-title">自然语言问答</h3>
+          <p class="value-text">快速洞察、深度研究、BI Builder 三种模式，用中文提问即可获取数据、图表与文字结论。</p>
+        </div>
+
+        <div class="value-card">
+          <div class="value-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <h3 class="value-title">团队空间管理</h3>
+          <p class="value-text">按空间隔离数据与项目，支持多成员协作；管理后台可配置 LLM、用户与审计日志。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="cases" class="section">
+    <div class="container">
+      <div class="section-head">
+        <span class="section-label">适用场景</span>
+        <h2 class="section-title">谁适合用 Parsight？</h2>
+        <p class="section-desc">任何需要把 Excel 数据快速变成结论的团队，都能省去重复做表和写公式的痛苦。</p>
+      </div>
+
+      <div class="case-grid">
+        <div class="case-card">
+          <div class="case-icon" style="background:#FFF5F2;color:#D97757">销</div>
+          <h3 class="case-title">销售管理</h3>
+          <p class="case-text">自动汇总各区域、销售员、产品线的业绩，生成排名、趋势与目标达成看板，告别手动透视表。</p>
+          <ul class="case-list">
+            <li>区域销售额对比与排名</li>
+            <li>销售员业绩达成率</li>
+            <li>Top / 尾部客户分析</li>
+          </ul>
+        </div>
+
+        <div class="case-card">
+          <div class="case-icon" style="background:#F0F9FF;color:#007AFF">运</div>
+          <h3 class="case-title">运营分析</h3>
+          <p class="case-text">把订单、库存、客户行为表关联起来，快速发现异常波动、库存风险与转化瓶颈。</p>
+          <ul class="case-list">
+            <li>库存周转与缺货预警</li>
+            <li>订单履约时效分析</li>
+            <li>客户留存与复购追踪</li>
+          </ul>
+        </div>
+
+        <div class="case-card">
+          <div class="case-icon" style="background:#F0FDF4;color:#34C759">财</div>
+          <h3 class="case-title">财务对账</h3>
+          <p class="case-text">跨表自动核对收入、成本与目标，发现差异并给出 SQL 依据，提升对账效率。</p>
+          <ul class="case-list">
+            <li>多维度收入汇总</li>
+            <li>预算 vs 实际差异分析</li>
+            <li>可核对的关联 SQL</li>
+          </ul>
+        </div>
+
+        <div class="case-card">
+          <div class="case-icon" style="background:#FFFBEB;color:#FF9500">市</div>
+          <h3 class="case-title">市场洞察</h3>
+          <p class="case-text">按行业、区域、客户等级分群，自动输出产品表现与趋势建议，辅助决策。</p>
+          <ul class="case-list">
+            <li>客户分群与画像</li>
+            <li>产品销量与占比</li>
+            <li>自然语言趋势提问</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section--surface">
+    <div class="container">
+      <div class="section-head">
+        <span class="section-label">工作流程</span>
+        <h2 class="section-title">三步从表格到洞察</h2>
+      </div>
+
+      <div class="workflow">
         <div class="workflow-step">
-          <div class="workflow-number">1</div>
+          <div class="workflow-icon">1</div>
           <h3 class="workflow-title">上传 Excel</h3>
-          <p class="workflow-text">将 XLSX 文件拖到数据页，系统自动解析入库。</p>
+          <p class="workflow-text">把一张或多张表格上传到空间，系统自动解析字段、类型与数据。</p>
         </div>
-        <svg class="workflow-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
         <div class="workflow-step">
-          <div class="workflow-number">2</div>
+          <div class="workflow-icon">2</div>
           <h3 class="workflow-title">AI 自动理解</h3>
-          <p class="workflow-text">单表六维理解、跨表关联分析，生成业务语义与 SQL。</p>
+          <p class="workflow-text">生成单表业务理解、跨表关联关系，并自动推荐指标与维度。</p>
         </div>
-        <svg class="workflow-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
         <div class="workflow-step">
-          <div class="workflow-number">3</div>
+          <div class="workflow-icon">3</div>
           <h3 class="workflow-title">看板与问答</h3>
-          <p class="workflow-text">一键生成 BI 看板，或用自然语言继续追问数据。</p>
+          <p class="workflow-text">一键生成 BI 看板，或通过聊天直接追问数据、下钻分析。</p>
         </div>
       </div>
     </div>
   </section>
 
-  <section class="section section--white">
+  <section id="preview" class="section">
     <div class="container">
-      <h2 class="section-title">产品预览</h2>
-      <p class="section-subtitle">简洁的 Apple 风格界面，聚焦数据本身。</p>
-      <div class="screenshot">
-        <span class="screenshot-label">应用截图待补充</span>
-        <p style="margin: 12px 0 0; color: var(--color-text-secondary); font-size: 14px;">运行项目后可在 /data、/bi、/chat 页面截取并替换此处占位图。</p>
+      <div class="section-head">
+        <span class="section-label">产品预览</span>
+        <h2 class="section-title">一个平台，覆盖数据全链路</h2>
+        <p class="section-desc">从数据管理、AI 理解、BI 看板到自然语言问答，全部在一个界面完成。</p>
+      </div>
+
+      <div class="preview-grid">
+        <div class="preview-card">
+          <div class="preview-tag">数据管理 + AI 理解</div>
+          <img src="./assets/preview-data.svg" alt="数据管理与 AI 理解" />
+        </div>
+        <div class="preview-card">
+          <div class="preview-tag">自动 BI 看板</div>
+          <img src="./assets/preview-bi.svg" alt="自动 BI 看板" />
+        </div>
+        <div class="preview-card">
+          <div class="preview-tag">自然语言问答</div>
+          <img src="./assets/preview-chat.svg" alt="自然语言问答" />
+        </div>
       </div>
     </div>
   </section>
 
-  <section id="quickstart" class="section">
+  <section class="section section--surface">
     <div class="container">
-      <h2 class="section-title">快速开始</h2>
-      <p class="section-subtitle">本地启动只需要 MySQL、Python 3.10+ 和 Node.js 18+。</p>
-      <div class="quickstart-code">
+      <div class="section-head">
+        <span class="section-label">对比</span>
+        <h2 class="section-title">为什么不用传统方式做？</h2>
+      </div>
+
+      <div class="compare-table">
+        <div class="compare-row compare-header">
+          <span>场景</span>
+          <span>传统方式</span>
+          <span>Parsight</span>
+        </div>
+        <div class="compare-row">
+          <span>准备数据</span>
+          <span>手动清洗、建表、写导入脚本</span>
+          <span class="compare-yes">上传 Excel 自动入库</span>
+        </div>
+        <div class="compare-row">
+          <span>理解业务含义</span>
+          <span>依赖分析师逐张梳理</span>
+          <span class="compare-yes">AI 自动生成业务报告</span>
+        </div>
+        <div class="compare-row">
+          <span>多表关联</span>
+          <span>VLOOKUP / SQL JOIN 手动拼接</span>
+          <span class="compare-yes">自动发现关联并输出 SQL</span>
+        </div>
+        <div class="compare-row">
+          <span>生成看板</span>
+          <span>在 BI 工具里手动拖拽配置</span>
+          <span class="compare-yes">一键生成 KPI、趋势、排名图</span>
+        </div>
+        <div class="compare-row">
+          <span>临时问题</span>
+          <span>写 SQL 或等排期</span>
+          <span class="compare-yes">中文提问，秒级回答</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="start" class="section">
+    <div class="container">
+      <div class="section-head">
+        <span class="section-label">快速开始</span>
+        <h2 class="section-title">本地 5 分钟跑起来</h2>
+        <p class="section-desc">只需要 MySQL、Python 3.10+ 和 Node.js 18+。</p>
+      </div>
+
+      <div class="quickstart">
         <code>
-          git clone https://github.com/shaoxia20240902/Parsight.git<br>
-          cd Parsight/backend && cp .env.example .env<br>
-          # 编辑 .env：配置 DATABASE_URL 与 JWT_SECRET_KEY<br>
-          cd .. && ./start.sh
+git clone https://github.com/shaoxia20240902/Parsight.git
+cd Parsight/backend && cp .env.example .env
+# 编辑 backend/.env：配置 DATABASE_URL 与 JWT_SECRET_KEY
+cd .. && ./start.sh
         </code>
       </div>
-      <p class="quickstart-note">启动后访问 <a href="http://localhost:3000">http://localhost:3000</a>，默认管理员账号 admin，首次启动密码见后端日志。LLM 配置请在 /admin/llm-config 完成。</p>
+      <p class="quickstart-note">
+        启动后访问 <a href="http://localhost:3000">http://localhost:3000</a>，默认管理员账号为 admin。登录后请在「管理后台 → LLM 配置」启用一条模型配置，AI 功能即可正常使用。
+      </p>
     </div>
   </section>
 
-  <section class="section section--white">
+  <section class="cta">
     <div class="container">
-      <h2 class="section-title">技术栈</h2>
-      <p class="section-subtitle">前后端分离，现代且可扩展。</p>
-      <div class="stack-list">
-        <span class="stack-item">FastAPI</span>
-        <span class="stack-item">SQLAlchemy</span>
-        <span class="stack-item">MySQL</span>
-        <span class="stack-item">Pandas</span>
-        <span class="stack-item">Vue 3</span>
-        <span class="stack-item">Vite</span>
-        <span class="stack-item">Element Plus</span>
-        <span class="stack-item">Pinia</span>
-        <span class="stack-item">ECharts</span>
-        <span class="stack-item">DeepSeek / DashScope</span>
+      <div class="cta-card">
+        <h2 class="cta-title">准备好让 Excel 自己说话了？</h2>
+        <p class="cta-desc">开源、可私有化部署，适用于销售、运营、财务等多种分析场景。</p>
+        <div class="hero-actions" style="justify-content:center">
+          <a class="btn btn--primary" href="https://github.com/shaoxia20240902/Parsight" target="_blank" rel="noopener">在 GitHub 上查看</a>
+          <a class="btn btn--secondary" href="./README.md">阅读文档</a>
+        </div>
       </div>
     </div>
   </section>
@@ -154,11 +320,14 @@
   <footer class="footer">
     <div class="container">
       <p>
-        Built by <a href="https://github.com/shaoxia20240902" target="_blank" rel="noopener">shaoxia20240902</a> ·
-        <a href="https://github.com/shaoxia20240902/Parsight" target="_blank" rel="noopener">GitHub</a> ·
-        <a href="./README.md">文档</a>
+        <strong>Parsight / 析见</strong> · Built by
+        <a href="https://github.com/shaoxia20240902" target="_blank" rel="noopener">shaoxia20240902</a>
       </p>
-      <p style="margin-top: 8px; font-size: 13px; color: var(--color-text-tertiary);">Released under the MIT License.</p>
+      <p class="footer-meta">
+        <a href="https://github.com/shaoxia20240902/Parsight" target="_blank" rel="noopener">GitHub</a> ·
+        <a href="./README.md">文档</a> ·
+        <a href="https://github.com/shaoxia20240902/Parsight/blob/main/LICENSE">MIT License</a>
+      </p>
     </div>
   </footer>
 </body>
