@@ -124,8 +124,8 @@
         >
           <div
             v-for="(chart, idx) in allBoardCharts"
-            :key="chartRenderKey(chart, idx)"
             v-show="chart.categoryId === activeCategoryId"
+            :key="chartRenderKey(chart, idx)"
             class="chart-grid__item"
             :class="{
               'chart-grid__item--full': chart.expanded,

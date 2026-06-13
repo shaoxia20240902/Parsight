@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.database import async_session, get_db
 from app.services.db_service import DBService
 from app.agents.bi_agent import BIClassificationAgent
-from app.services.bi_generation import UnderstandingNotReadyError
+from app.services.bi_exceptions import UnderstandingNotReadyError
 from app.services.bi_mvp_generation import BILlmMVPGenerator
 from app.services.bi_understanding_gate import check_understanding_ready, understanding_gate_http_detail
 from app.services.bi_profiler import quote_ident
@@ -32,7 +32,7 @@ from app.services.bi_pipeline_logger import (
     log_step_ok,
     log_step_warn,
 )
-from app.services.db_service import _json_default, json_safe
+from app.services.db.utils import json_default, json_safe
 from app.utils.sql_validator import SQLValidator
 
 logger = logging.getLogger(__name__)

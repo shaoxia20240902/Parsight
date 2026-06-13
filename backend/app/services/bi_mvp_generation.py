@@ -16,10 +16,11 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
-from app.services.bi_generation import UnderstandingNotReadyError
+from app.services.bi_exceptions import UnderstandingNotReadyError
 from app.services.bi_profiler import BIProfiler, quote_ident
 from app.services.bi_understanding_gate import check_understanding_ready, resolve_understanding_text
-from app.services.db_service import DBService, json_safe
+from app.services.db_service import DBService
+from app.services.db.utils import json_safe
 from app.services.llm_client import LLMClient
 from app.utils.sql_validator import SQLValidator
 

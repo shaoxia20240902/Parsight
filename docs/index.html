@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Parsight / 析见 — 上传 Excel，AI 自动理解数据、关联多表并生成 BI 看板与自然语言问答。" />
+  <title>Parsight · 数据洞察</title>
+  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
+  <link rel="stylesheet" href="./assets/style.css" />
+</head>
+<body>
+  <nav class="nav">
+    <div class="container nav-inner">
+      <a class="nav-logo" href="#" aria-label="Parsight">
+        <img src="./assets/logo-icon.svg" alt="" />
+        <span>Parsight</span>
+      </a>
+      <div class="nav-links">
+        <a class="nav-link" href="#features">能力</a>
+        <a class="nav-link" href="#quickstart">快速开始</a>
+        <a class="nav-link" href="./README.md">文档</a>
+        <a class="nav-link nav-link--primary" href="https://github.com/shaoxia20240902/Parsight" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <div class="container">
+      <img class="hero-logo" src="./assets/logo-full.svg" alt="Parsight" />
+      <h1 class="hero-title">Parsight <span>/ 析见</span></h1>
+      <p class="hero-desc">
+        面向 XLSX 数据分析的智能 BI 应用。上传 Excel 后，AI 自动完成单表理解、跨表关联、看板生成与自然语言问答。
+      </p>
+      <div class="hero-actions">
+        <a class="btn btn--primary" href="https://github.com/shaoxia20240902/Parsight" target="_blank" rel="noopener">
+          查看源码
+        </a>
+        <a class="btn btn--secondary" href="#quickstart">快速开始</a>
+      </div>
+    </div>
+  </header>
+
+  <section id="features" class="section section--white">
+    <div class="container">
+      <h2 class="section-title">核心能力</h2>
+      <p class="section-subtitle">从原始表格到可用洞察，Parsight 让数据分析不再依赖手动建模。</p>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="feature-icon">1</div>
+          <h3 class="feature-title">XLSX 上传与解析</h3>
+          <p class="feature-text">支持 .xlsx / .xls，自动识别 Sheet 结构、字段类型并写入 MySQL。</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">2</div>
+          <h3 class="feature-title">AI 单表理解</h3>
+          <p class="feature-text">六维理解业务含义，输出 Markdown 报告并支持异议核对与修正。</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">3</div>
+          <h3 class="feature-title">跨表关联分析</h3>
+          <p class="feature-text">在空间维度发现多表关联，生成可核对的 SQL 与关系说明。</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">4</div>
+          <h3 class="feature-title">自动 BI 看板</h3>
+          <p class="feature-text">基于理解结果自动推荐指标、维度与图表类型，生成可交互看板。</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">5</div>
+          <h3 class="feature-title">自然语言问答</h3>
+          <p class="feature-text">快速洞察、深度研究、BI Builder 三种模式，用提问代替写 SQL。</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">6</div>
+          <h3 class="feature-title">空间与后台管理</h3>
+          <p class="feature-text">多空间数据隔离、LLM 配置、用户与日志管理，适配团队使用。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container">
+      <h2 class="section-title">三步获得洞察</h2>
+      <p class="section-subtitle">无需数据仓库，无需预先建模。</p>
+      <div class="workflow-steps">
+        <div class="workflow-step">
+          <div class="workflow-number">1</div>
+          <h3 class="workflow-title">上传 Excel</h3>
+          <p class="workflow-text">将 XLSX 文件拖到数据页，系统自动解析入库。</p>
+        </div>
+        <svg class="workflow-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        <div class="workflow-step">
+          <div class="workflow-number">2</div>
+          <h3 class="workflow-title">AI 自动理解</h3>
+          <p class="workflow-text">单表六维理解、跨表关联分析，生成业务语义与 SQL。</p>
+        </div>
+        <svg class="workflow-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        <div class="workflow-step">
+          <div class="workflow-number">3</div>
+          <h3 class="workflow-title">看板与问答</h3>
+          <p class="workflow-text">一键生成 BI 看板，或用自然语言继续追问数据。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section--white">
+    <div class="container">
+      <h2 class="section-title">产品预览</h2>
+      <p class="section-subtitle">简洁的 Apple 风格界面，聚焦数据本身。</p>
+      <div class="screenshot">
+        <span class="screenshot-label">应用截图待补充</span>
+        <p style="margin: 12px 0 0; color: var(--color-text-secondary); font-size: 14px;">运行项目后可在 /data、/bi、/chat 页面截取并替换此处占位图。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="quickstart" class="section">
+    <div class="container">
+      <h2 class="section-title">快速开始</h2>
+      <p class="section-subtitle">本地启动只需要 MySQL、Python 3.10+ 和 Node.js 18+。</p>
+      <div class="quickstart-code">
+        <code>
+          git clone https://github.com/shaoxia20240902/Parsight.git<br>
+          cd Parsight/backend && cp .env.example .env<br>
+          # 编辑 .env：配置 DATABASE_URL 与 JWT_SECRET_KEY<br>
+          cd .. && ./start.sh
+        </code>
+      </div>
+      <p class="quickstart-note">启动后访问 <a href="http://localhost:3000">http://localhost:3000</a>，默认管理员账号 admin，首次启动密码见后端日志。LLM 配置请在 /admin/llm-config 完成。</p>
+    </div>
+  </section>
+
+  <section class="section section--white">
+    <div class="container">
+      <h2 class="section-title">技术栈</h2>
+      <p class="section-subtitle">前后端分离，现代且可扩展。</p>
+      <div class="stack-list">
+        <span class="stack-item">FastAPI</span>
+        <span class="stack-item">SQLAlchemy</span>
+        <span class="stack-item">MySQL</span>
+        <span class="stack-item">Pandas</span>
+        <span class="stack-item">Vue 3</span>
+        <span class="stack-item">Vite</span>
+        <span class="stack-item">Element Plus</span>
+        <span class="stack-item">Pinia</span>
+        <span class="stack-item">ECharts</span>
+        <span class="stack-item">DeepSeek / DashScope</span>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="container">
+      <p>
+        Built by <a href="https://github.com/shaoxia20240902" target="_blank" rel="noopener">shaoxia20240902</a> ·
+        <a href="https://github.com/shaoxia20240902/Parsight" target="_blank" rel="noopener">GitHub</a> ·
+        <a href="./README.md">文档</a>
+      </p>
+      <p style="margin-top: 8px; font-size: 13px; color: var(--color-text-tertiary);">Released under the MIT License.</p>
+    </div>
+  </footer>
+</body>
+</html>

@@ -3,6 +3,7 @@
 """
 import asyncio
 import json
+import logging
 from typing import Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -19,8 +20,10 @@ from app.services.bi_understanding_tasks import (
     _relations_generation_progress,
     run_space_relations_summary,
 )
+from app.utils.task_manager import task_manager
 
 router = APIRouter(prefix="/api/data", tags=["relations"])
+logger = logging.getLogger(__name__)
 
 VerificationStatus = Literal["idle", "verifying", "completed", "failed"]
 
@@ -150,7 +153,10 @@ async def generate_relations_stream(
             )
 
     if regenerate and space_id not in _generating_relations_spaces:
-        asyncio.create_task(run_space_relations_summary(space_id, regenerate=True))
+        task_manager.start(
+            f"relations_summary:{space_id}",
+            run_space_relations_summary(space_id, regenerate=True),
+        )
 
     async def watch_stream():
         last_sent_len = 0

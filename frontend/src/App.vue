@@ -19,6 +19,19 @@ import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
   --color-danger: #FF3B30;
   --color-info: #5AC8FA;
 
+  /* 暖色调强调色（项目主品牌色） */
+  --color-accent-warm: #D97757;
+  --color-accent-warm-hover: #C6613F;
+  --color-accent-warm-strong: #B85F43;
+  --color-accent-warm-soft: #E8A87C;
+  --color-accent-warm-bg-top: #FFFCF7;
+  --color-accent-warm-bg-bottom: #F7F1E8;
+  --color-accent-warm-border: #E3D8CA;
+  --color-accent-warm-line: #E7DCCF;
+  --color-accent-warm-text: #2B211B;
+  --color-accent-warm-muted: #7B6F65;
+  --color-accent-warm-faint: #A69A90;
+
   --color-text-primary: #1D1D1F;
   --color-text-secondary: #6E6E73;
   --color-text-tertiary: #AEAEB2;

@@ -50,7 +50,7 @@
     </header>
 
     <div class="body">
-      <aside class="aside" v-if="!hideSidebar">
+      <aside v-if="!hideSidebar" class="aside">
         <component :is="currentNav" />
       </aside>
 

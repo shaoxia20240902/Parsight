@@ -1,4 +1,5 @@
 import os
+import secrets
 from enum import Enum
 from pathlib import Path
 
@@ -83,7 +84,31 @@ OSS_BASE_PATH = "xlsx-qa"
 # 服务端口
 SERVER_PORT = int(os.getenv("SERVER_PORT", "8000"))
 
-# JWT配置
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "xlsx-bi-secret-key-change-in-production")
+# ============================================================
+# 安全配置
+# ============================================================
+ADMIN_INITIAL_PASSWORD = os.getenv("ADMIN_INITIAL_PASSWORD", "")
+
+# CORS 配置：生产环境必须显式配置，开发环境默认只允许本地前端
+def _parse_cors_origins(raw: str) -> list[str]:
+    if not raw:
+        return ["http://localhost:3000"]
+    if raw.strip() == "*":
+        return ["*"]
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+CORS_ALLOW_ORIGINS = _parse_cors_origins(os.getenv("CORS_ALLOW_ORIGINS", ""))
+
+# JWT 配置
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
+DEFAULT_SECRET_WARNING = (
+    "JWT_SECRET_KEY 未配置或长度不足 32 位。"
+    "请在 .env 中设置长度不少于 32 位的随机字符串，例如：\n"
+    f"  JWT_SECRET_KEY={secrets.token_urlsafe(32)}"
+)
+
+if len(SECRET_KEY) < 32:
+    raise RuntimeError(DEFAULT_SECRET_WARNING)
+
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "1440"))  # 默认24小时

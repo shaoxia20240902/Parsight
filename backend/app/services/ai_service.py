@@ -9,8 +9,6 @@ import asyncio
 import logging
 from typing import Any, Dict, List
 
-from app.agents.agent_factory import AgentService
-
 logger = logging.getLogger(__name__)
 
 
@@ -18,6 +16,8 @@ class AIService:
     """AI 服务 — 封装所有 Agent 调用，对上层透明"""
 
     def __init__(self):
+        # 延迟导入 AgentService，打破 services 与 agents 包之间的循环导入
+        from app.agents.agent_factory import AgentService
         self.agents = AgentService()
 
     # ================================================================

@@ -1,6 +1,7 @@
 import uuid
 import json
 import asyncio
+import logging
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form, Query
@@ -18,8 +19,10 @@ from app.utils.reimport_validator import validate_reimport_sheets
 from app.services.bi_understanding_tasks import run_post_upload_understanding
 from app.routers.auth import get_current_user
 from app.config import UPLOAD_DIR, ALLOWED_EXTENSIONS, OSS_ENDPOINT, OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET, OSS_BUCKET_NAME, OSS_BASE_PATH
+from app.utils.task_manager import task_manager
 
 router = APIRouter(prefix="/api", tags=["upload"])
+logger = logging.getLogger(__name__)
 
 async def run_post_upload_analysis(
     db_service: DBService,
@@ -28,26 +31,29 @@ async def run_post_upload_analysis(
 ):
     """上传后：异步执行 Sheet 摘要 + 六维理解（不自动生成 BI）。"""
     await db_service.update_file_status(file_id, "uploaded")
-    asyncio.create_task(run_post_upload_understanding(file_id, sheets_info))
+    task_manager.start(
+        f"post_upload_understanding:{file_id}",
+        run_post_upload_understanding(file_id, sheets_info),
+    )
 
 
 async def upload_to_oss(file_path: Path, oss_path: str) -> bool:
     """上传文件到 OSS（如果配置了凭证）"""
     if not OSS_ENDPOINT or not OSS_ACCESS_KEY_ID:
-        print(f"OSS 未配置，跳过上传: {oss_path}")
+        logger.info("OSS 未配置，跳过上传: %s", oss_path)
         return False
     try:
         import oss2
         auth = oss2.Auth(OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET)
         bucket = oss2.Bucket(auth, OSS_ENDPOINT, OSS_BUCKET_NAME)
         bucket.put_object_from_file(oss_path, str(file_path))
-        print(f"OSS 上传成功: {oss_path}")
+        logger.info("OSS 上传成功: %s", oss_path)
         return True
     except ImportError:
-        print("oss2 库未安装，跳过 OSS 上传")
+        logger.warning("oss2 库未安装，跳过 OSS 上传")
         return False
     except Exception as e:
-        print(f"OSS 上传失败: {e}")
+        logger.warning("OSS 上传失败: %s", e)
         return False
 
 

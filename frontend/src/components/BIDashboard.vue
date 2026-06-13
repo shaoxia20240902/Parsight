@@ -4,7 +4,7 @@
     <div v-if="!generating" class="bi-dashboard__header">
       <div class="bi-dashboard__title-group">
         <h2 class="bi-dashboard__title">BI 智能看板</h2>
-        <p class="bi-dashboard__subtitle" v-if="activeConfig">
+        <p v-if="activeConfig" class="bi-dashboard__subtitle">
           {{ activeCategoryTotal }} 个分类 · {{ charts.length }} 个图表
           <span v-if="usingDemo"> · 演示数据</span>
         </p>
@@ -15,8 +15,8 @@
           type="primary"
           :icon="'Refresh'"
           size="small"
-          @click="startAIFromChoice"
           :loading="generating"
+          @click="startAIFromChoice"
         >
           {{ biConfig || biStatus === 'completed' ? '重新 AI 构建' : 'AI 构建' }}
         </el-button>

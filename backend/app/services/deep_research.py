@@ -167,20 +167,12 @@ class DeepResearchService:
         # Step 4: 图表生成
         yield {"step": "chart_generation", "status": "processing", "message": "生成图表..."}
 
-        charts = []
-        for dr in data_results:
-            if dr["data"]:
-                columns = list(dr["data"][0].keys()) if dr["data"] else []
-                try:
-                    chart_result = await self.ai.generate_chart(dr["question"], dr["data"], columns)
-                    charts.append(chart_result)
-                except Exception as e:
-                    charts.append({
-                        "chart_type": "table",
-                        "title": dr.get("question", "数据"),
-                        "error": str(e),
-                        "data": dr["data"][:20],
-                    })
+        chart_tasks = [
+            self._generate_chart_safe(dr)
+            for dr in data_results
+            if dr.get("data")
+        ]
+        charts = await asyncio.gather(*chart_tasks) if chart_tasks else []
 
         yield {
             "step": "chart_generation",
@@ -192,17 +184,24 @@ class DeepResearchService:
         # Step 5: 总结报告
         yield {"step": "report_generation", "status": "processing", "message": "生成分析报告..."}
 
-        report_result = await self.ai.generate_report(
-            question,
-            selected_questions,
-            data_results
-        )
+        try:
+            report_result = await asyncio.wait_for(
+                self.ai.generate_report(
+                    question,
+                    selected_questions,
+                    data_results
+                ),
+                timeout=45,
+            )
+            report = report_result["report"]
+        except Exception as e:
+            report = self._fallback_report(question, selected_questions, data_results, str(e))
 
         yield {
             "step": "report_generation",
             "status": "completed",
             "message": "报告生成完成",
-            "report": report_result["report"]
+            "report": report
         }
 
         # 完成
@@ -215,7 +214,59 @@ class DeepResearchService:
                 "condition": confirmed_filters,
                 "sub_questions": selected_questions,
                 "charts": charts,
-                "report": report_result["report"],
+                "report": report,
                 "data_results": data_results
             }
         }
+
+    def _fallback_report(
+        self,
+        question: str,
+        selected_questions: List[Dict[str, Any]],
+        data_results: List[Dict[str, Any]],
+        error: str,
+    ) -> str:
+        lines = [
+            f"# 深度洞察报告",
+            "",
+            f"## 分析问题",
+            question,
+            "",
+            "## 关键发现",
+        ]
+        for index, result in enumerate(data_results[:5], start=1):
+            rows = result.get("data") or []
+            if not rows:
+                lines.append(f"{index}. {result.get('question', '子问题')}：未查询到有效数据。")
+                continue
+            preview = "；".join(
+                "，".join(f"{key}={value}" for key, value in row.items())
+                for row in rows[:3]
+            )
+            lines.append(f"{index}. {result.get('question', '子问题')}：{preview}")
+
+        lines.extend([
+            "",
+            "## 推理路径",
+            f"本轮共筛选 {len(selected_questions)} 个子问题，执行 {len(data_results)} 条查询，并基于查询结果生成结论。",
+            "",
+            "## 说明",
+            f"模型报告生成超时或失败，系统已使用查询证据生成兜底报告。错误信息：{error}",
+        ])
+        return "\n".join(lines)
+
+    async def _generate_chart_safe(self, data_result: Dict[str, Any]) -> Dict[str, Any]:
+        data = data_result.get("data") or []
+        columns = list(data[0].keys()) if data else []
+        try:
+            return await asyncio.wait_for(
+                self.ai.generate_chart(data_result.get("question", "数据"), data, columns),
+                timeout=25,
+            )
+        except Exception as e:
+            return {
+                "chart_type": "table",
+                "title": data_result.get("question", "数据"),
+                "error": str(e),
+                "data": data[:20],
+            }

@@ -13,6 +13,7 @@ from app.services.ai_service import AIService
 from app.services.deep_research import DeepResearchService
 from app.services.quick_qa import QuickQAService
 from app.services.bi_builder_service import BIBuilderService
+from app.services.chat_intent import ChatIntentService
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -33,6 +34,13 @@ class QuickQARequest(BaseModel):
     space_id: Optional[str] = None
     session_id: Optional[str] = None
     conversation_history: Optional[List[dict]] = None
+
+
+class ChatIntentRequest(BaseModel):
+    file_id: str
+    question: str
+    mode: str = "quick"
+    space_id: Optional[str] = None
 
 
 class ConfirmKeywordRequest(BaseModel):
@@ -87,28 +95,15 @@ async def save_chat_message(
         await db.commit()
 
 
-@router.post("/deep-research")
-async def deep_research(request: DeepResearchRequest, db: AsyncSession = Depends(get_db)):
-    """深度调研模式（SSE流式返回）"""
-
-    db_service = DBService(db)
-
-    # 保存用户消息
-    session_id = request.session_id or str(uuid.uuid4())
-    await save_chat_message(db, request.space_id, request.file_id, "user", request.question, mode="deep", session_id=session_id)
-
-    # 验证文件存在且已分析
-    file_record = await db_service.get_file_record(request.file_id)
+async def load_chat_data_context(db_service: DBService, file_id: str):
+    file_record = await db_service.get_file_record(file_id)
     if not file_record:
         raise HTTPException(status_code=404, detail="文件不存在")
 
     if file_record.status not in ("analyzed", "understanding_ready"):
         raise HTTPException(status_code=400, detail="文件尚未完成分析，请先执行分析")
 
-    # 获取Sheet元数据
-    sheet_metas = await db_service.get_sheet_metas(request.file_id)
-
-    # 构建表结构信息（含完整列信息和 Sheet 名）
+    sheet_metas = await db_service.get_sheet_metas(file_id)
     table_schemas = {}
     sheets_summary = []
     for meta in sheet_metas:
@@ -124,6 +119,34 @@ async def deep_research(request: DeepResearchRequest, db: AsyncSession = Depends
             "key_dimensions": json.loads(meta.key_dimensions) if isinstance(meta.key_dimensions, str) else (meta.key_dimensions or []),
             "key_metrics": json.loads(meta.key_metrics) if isinstance(meta.key_metrics, str) else (meta.key_metrics or []),
         })
+    return file_record, table_schemas, sheets_summary
+
+
+@router.post("/intent")
+async def detect_chat_intent(request: ChatIntentRequest, db: AsyncSession = Depends(get_db)):
+    """统一意图识别：三种问答在执行前先与用户确认是否继续。"""
+    db_service = DBService(db)
+    _, table_schemas, sheets_summary = await load_chat_data_context(db_service, request.file_id)
+    result = ChatIntentService().classify(
+        question=request.question,
+        mode=request.mode,
+        table_schemas=table_schemas,
+        sheets_summary=sheets_summary,
+    )
+    return {"code": 200, "data": result}
+
+
+@router.post("/deep-research")
+async def deep_research(request: DeepResearchRequest, db: AsyncSession = Depends(get_db)):
+    """深度调研模式（SSE流式返回）"""
+
+    db_service = DBService(db)
+
+    # 保存用户消息
+    session_id = request.session_id or str(uuid.uuid4())
+    await save_chat_message(db, request.space_id, request.file_id, "user", request.question, mode="deep", session_id=session_id)
+
+    _, table_schemas, sheets_summary = await load_chat_data_context(db_service, request.file_id)
 
     # 创建深度调研服务
     deep_research_service = DeepResearchService(db_service, ai_service)
@@ -163,33 +186,7 @@ async def quick_qa(request: QuickQARequest, db: AsyncSession = Depends(get_db)):
     session_id = request.session_id or str(uuid.uuid4())
     await save_chat_message(db, request.space_id, request.file_id, "user", request.question, mode="insight", session_id=session_id)
 
-    # 验证文件存在且已分析
-    file_record = await db_service.get_file_record(request.file_id)
-    if not file_record:
-        raise HTTPException(status_code=404, detail="文件不存在")
-
-    if file_record.status not in ("analyzed", "understanding_ready"):
-        raise HTTPException(status_code=400, detail="文件尚未完成分析，请先执行分析")
-
-    # 获取Sheet元数据
-    sheet_metas = await db_service.get_sheet_metas(request.file_id)
-
-    # 构建表结构信息（含完整列信息和 Sheet 名）
-    table_schemas = {}
-    sheets_summary = []
-    for meta in sheet_metas:
-        columns = json.loads(meta.columns) if isinstance(meta.columns, str) else meta.columns
-        table_schemas[meta.table_name] = {
-            "sheet_name": meta.sheet_name,
-            "columns": columns,
-        }
-        sheets_summary.append({
-            "sheet_name": meta.sheet_name,
-            "table_name": meta.table_name,
-            "summary": meta.summary,
-            "key_dimensions": json.loads(meta.key_dimensions) if isinstance(meta.key_dimensions, str) else (meta.key_dimensions or []),
-            "key_metrics": json.loads(meta.key_metrics) if isinstance(meta.key_metrics, str) else (meta.key_metrics or []),
-        })
+    _, table_schemas, sheets_summary = await load_chat_data_context(db_service, request.file_id)
 
     # 创建快速问答服务
     quick_qa_service = QuickQAService(db_service, ai_service)

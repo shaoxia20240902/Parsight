@@ -15,32 +15,13 @@
 
     <template v-else>
       <div class="card understand-card">
-        <div v-if="showStageProgress" class="stage-progress">
-          <div class="stage-progress-head">
-            <span class="stage-progress-title">{{ activeStage.title }}</span>
-            <span class="stage-progress-desc">{{ activeStage.desc }}</span>
-          </div>
-          <div class="stage-progress-track">
-            <div
-              v-for="(stage, index) in progressStages"
-              :key="stage.title"
-              class="stage-progress-item"
-              :class="{
-                active: index === activeStageIndex,
-                complete: index < activeStageIndex,
-                pending: index > activeStageIndex
-              }"
-            >
-              <span class="stage-progress-dot">
-                <el-icon v-if="index === activeStageIndex" class="stage-progress-spinner is-loading">
-                  <Loading />
-                </el-icon>
-                <span v-else class="stage-progress-index">{{ index + 1 }}</span>
-              </span>
-              <span class="stage-progress-label">{{ stage.title }}</span>
-            </div>
-          </div>
-        </div>
+        <StageProgress
+          v-if="showStageProgress"
+          :title="activeStage.title"
+          :desc="activeStage.desc"
+          :stages="progressStages"
+          :active-index="activeStageIndex"
+        />
 
         <div class="understand-card-header">
           <div>
@@ -112,8 +93,9 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { marked } from 'marked'
-import { FolderOpened, Connection, Loading } from '@element-plus/icons-vue'
+import { FolderOpened, Connection } from '@element-plus/icons-vue'
 import { getRelations } from '../api/data'
+import StageProgress from '../components/StageProgress.vue'
 
 type ProgressStage = {
   title: string
@@ -324,138 +306,6 @@ onUnmounted(() => {
 .understand-card {
   position: relative;
   padding: var(--spacing-xl);
-}
-
-.stage-progress {
-  --stage-bg-top: #FFFCF7;
-  --stage-bg-bottom: #F7F1E8;
-  --stage-border: #E3D8CA;
-  --stage-text: #2B211B;
-  --stage-muted: #7B6F65;
-  --stage-faint: #A69A90;
-  --stage-line: #E7DCCF;
-  --stage-accent: #D97757;
-  --stage-accent-strong: #B85F43;
-  padding: 24px 28px 22px;
-  margin-bottom: var(--spacing-xl);
-  font-family: var(--font-family);
-  background: linear-gradient(180deg, var(--stage-bg-top) 0%, var(--stage-bg-bottom) 100%);
-  border: 1px solid var(--stage-border);
-  border-radius: var(--radius-xl);
-  box-shadow: 0 12px 34px rgba(66, 45, 31, 0.08);
-}
-
-.stage-progress-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 24px;
-}
-
-.stage-progress-title {
-  font-size: 24px;
-  font-weight: 700;
-  color: var(--stage-text);
-  letter-spacing: 0;
-  white-space: nowrap;
-}
-
-.stage-progress-desc {
-  min-width: 0;
-  font-size: 16px;
-  line-height: 1.4;
-  color: var(--stage-muted);
-  text-align: right;
-}
-
-.stage-progress-track {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  column-gap: 18px;
-}
-
-.stage-progress-item {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-  min-width: 0;
-}
-
-.stage-progress-item:not(:last-child)::after {
-  content: "";
-  position: absolute;
-  left: 34px;
-  right: calc(-100% + 18px);
-  top: 14px;
-  height: 4px;
-  background: var(--stage-line);
-  border-radius: 999px;
-}
-
-.stage-progress-item.complete:not(:last-child)::after {
-  background: var(--stage-accent);
-}
-
-.stage-progress-dot {
-  position: relative;
-  z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  flex: 0 0 32px;
-  border-radius: 50%;
-  background: var(--stage-line);
-  border: 4px solid var(--stage-bg-top);
-  box-shadow: 0 3px 10px rgba(66, 45, 31, 0.14);
-}
-
-.stage-progress-item.complete .stage-progress-dot,
-.stage-progress-item.active .stage-progress-dot {
-  background: var(--stage-accent);
-}
-
-.stage-progress-item.active .stage-progress-dot {
-  box-shadow: 0 0 0 6px rgba(217, 119, 87, 0.14), 0 6px 16px rgba(184, 95, 67, 0.22);
-}
-
-.stage-progress-spinner {
-  font-size: 17px;
-  color: #fff;
-}
-
-.stage-progress-index {
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1;
-  color: #fff;
-}
-
-.stage-progress-item.pending .stage-progress-index {
-  color: var(--stage-muted);
-}
-
-.stage-progress-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--stage-faint);
-}
-
-.stage-progress-item.complete .stage-progress-label,
-.stage-progress-item.active .stage-progress-label {
-  color: var(--stage-text);
-}
-
-.stage-progress-item.active .stage-progress-label {
-  color: var(--stage-accent-strong);
 }
 
 .verify-badge {

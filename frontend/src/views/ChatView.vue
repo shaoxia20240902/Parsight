@@ -1,438 +1,76 @@
 <template>
   <div class="chat-view">
-    <aside class="chat-sidebar">
-      <div class="mode-switcher">
-        <button
-          v-for="mode in chatModes"
-          :key="mode.id"
-          type="button"
-          class="mode-btn"
-          :class="{ 'mode-btn--active': activeMode === mode.id }"
-          @click="switchMode(mode.id)"
-        >
-          <span
-            class="mode-btn__icon"
-            :style="{ color: mode.accent, background: mode.accentSoft }"
-          >
-            <el-icon><component :is="mode.icon" /></el-icon>
-          </span>
-          <span class="mode-btn__text">
-            <span class="mode-btn__label">{{ mode.label }}</span>
-            <span class="mode-btn__desc">{{ mode.description }}</span>
-          </span>
-        </button>
-      </div>
-
-      <div class="sessions-section">
-        <div class="sessions-head">
-          <span class="sessions-title">聊天记录</span>
-          <span class="sessions-count">{{ filteredSessions.length }}</span>
-        </div>
-
-        <div v-if="filteredSessions.length" class="session-list">
-          <button
-            v-for="item in filteredSessions"
-            :key="item.id"
-            type="button"
-            class="session-item"
-            :class="{ 'session-item--active': activeSessionId === item.id }"
-            @click="selectSession(item)"
-          >
-            <span
-              class="session-mode-icon"
-              :style="{
-                color: getChatMode(item.mode).accent,
-                background: getChatMode(item.mode).accentSoft
-              }"
-              :title="getChatMode(item.mode).label"
-            >
-              <el-icon><component :is="getChatMode(item.mode).icon" /></el-icon>
-            </span>
-            <span class="session-body">
-              <span class="session-title">{{ item.title }}</span>
-              <span class="session-preview">{{ item.preview }}</span>
-            </span>
-            <span class="session-time">{{ formatSessionTime(item.updatedAt) }}</span>
-          </button>
-        </div>
-        <div v-else class="sessions-empty">
-          <p>暂无「{{ currentModeConfig.label }}」对话</p>
-        </div>
-      </div>
-    </aside>
+    <ChatSidebar
+      :chat-modes="chatModes"
+      :active-mode="activeMode"
+      :sessions="filteredSessions"
+      :active-session-id="activeSessionId"
+      @switch-mode="switchMode"
+      @select-session="selectSession"
+    />
 
     <main class="chat-main">
       <div class="chat-panel">
         <div
+          ref="chatRef"
           class="chat-messages"
           :class="{ 'chat-messages--welcome': messages.length === 0 }"
-          ref="chatRef"
         >
-          <div v-if="messages.length === 0" class="chat-welcome">
-            <div class="welcome-stage">
-              <div class="welcome-hero-layer" aria-hidden="true">
-                <img
-                  v-for="mode in chatModes"
-                  :key="mode.id"
-                  :src="mode.avatar"
-                  :alt="mode.label"
-                  class="welcome-hero"
-                  :class="{ 'welcome-hero--visible': contentMode === mode.id }"
-                  decoding="async"
-                />
-              </div>
+          <WelcomeScreen
+            v-if="messages.length === 0"
+            :chat-modes="chatModes"
+            :content-mode="contentMode"
+            :content-fading="contentFading"
+            :display-mode-config="displayModeConfig"
+            :insight-groups="insightGroups"
+            :deep-prompts="deepPrompts"
+            :builder-prompts="builderPrompts"
+            @prompt-click="onPromptClick"
+          />
 
-              <div class="welcome-content" :class="{ 'welcome-content--fading': contentFading }">
-                  <h2 class="welcome-title">{{ displayModeConfig.welcomeTitle }}</h2>
-                  <p class="welcome-desc">{{ displayModeConfig.description }}</p>
-
-                <!-- 洞察：3 组 × 3 问题 -->
-                <div
-                  v-show="contentMode === 'insight'"
-                  class="prompt-layout prompt-layout--grid"
-                >
-                  <div
-                    v-for="group in insightGroups"
-                    :key="group.title"
-                    class="prompt-card"
-                  >
-                    <h3 class="prompt-card__title">{{ group.title }}</h3>
-                    <div class="prompt-card__list">
-                      <button
-                        v-for="(q, qi) in group.questions"
-                        :key="qi"
-                        type="button"
-                        class="prompt-chip"
-                        @click="onPromptClick(q)"
-                      >
-                        {{ q }}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- 深度洞察 -->
-                <div v-show="contentMode === 'deep'" class="prompt-layout">
-                  <div class="prompt-card prompt-card--single">
-                    <h3 class="prompt-card__title">推荐深度分析问题</h3>
-                    <div class="prompt-card__list">
-                      <button
-                        v-for="(q, i) in deepPrompts"
-                        :key="i"
-                        type="button"
-                        class="prompt-chip prompt-chip--long"
-                        @click="onPromptClick(q)"
-                      >
-                        {{ q }}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- 构建者 -->
-                <div v-show="contentMode === 'builder'" class="prompt-layout">
-                  <div class="prompt-card prompt-card--single">
-                    <h3 class="prompt-card__title">描述你想看的销售报表</h3>
-                    <div class="prompt-card__list">
-                      <button
-                        v-for="(q, i) in builderPrompts"
-                        :key="i"
-                        type="button"
-                        class="prompt-chip prompt-chip--long"
-                        @click="onPromptClick(q)"
-                      >
-                        {{ q }}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <TransitionGroup v-else name="msg" tag="div" class="msg-list">
-            <div
-              v-for="(msg, i) in messages"
-              :key="i"
-              :class="['message', msg.role]"
-            >
-              <div class="message-avatar">{{ msg.role === 'user' ? '我' : '析' }}</div>
-              <div class="message-bubble">
-                <div class="message-content" :class="{ 'message-content--pending': msg.pending }">
-                  <span v-if="msg.pending" class="thinking-dot" aria-hidden="true"></span>
-                  {{ msg.content }}
-                </div>
-                <div v-if="msg.blocks?.length" class="builder-blocks">
-                  <template v-for="(block, bi) in msg.blocks" :key="bi">
-                    <div v-if="block.type === 'markdown'" class="builder-markdown" v-html="renderMarkdown(block.content)" />
-
-                    <div v-else-if="block.type === 'data_table'" class="builder-card builder-card--preview">
-                      <div class="builder-card__title">{{ block.title || '查询结果' }}</div>
-                      <div v-if="block.rows?.length" class="preview-table-wrap">
-                        <table class="preview-table">
-                          <thead>
-                            <tr>
-                              <th v-for="col in block.columns" :key="col">{{ col }}</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            <tr v-for="(row, ri) in block.rows.slice(0, 8)" :key="ri">
-                              <td v-for="col in block.columns" :key="col">{{ row[col] }}</td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                      <div v-else class="builder-card__meta">暂无可展示数据。</div>
-                    </div>
-
-                    <div v-else-if="block.type === 'chart_summary'" class="builder-card">
-                      <div class="builder-card__title">{{ block.title }}</div>
-                      <div class="builder-card__meta">
-                        {{ block.category_name || block.category_id || '未分类' }} · {{ block.chart_type || 'chart' }}
-                      </div>
-                      <div v-if="block.reason" class="builder-card__reason">{{ block.reason }}</div>
-                    </div>
-
-                    <div v-else-if="block.type === 'chart_preview'" class="builder-card builder-card--preview">
-                      <div class="builder-card__title">图表预览</div>
-                      <div v-if="block.preview?.rows?.length" class="preview-table-wrap">
-                        <table class="preview-table">
-                          <thead>
-                            <tr>
-                              <th v-for="col in block.preview.columns" :key="col">{{ col }}</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            <tr v-for="(row, ri) in block.preview.rows.slice(0, 5)" :key="ri">
-                              <td v-for="col in block.preview.columns" :key="col">{{ row[col] }}</td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                      <div v-else class="builder-card__meta">可点击“去查看”在 BI 页面查看完整图表。</div>
-                    </div>
-
-                    <div v-else-if="block.type === 'questionnaire'" class="builder-card">
-                      <div class="builder-card__title">必填信息</div>
-                      <label v-for="q in block.questions" :key="q.field" class="builder-field">
-                        <span>{{ q.label }}</span>
-                        <select v-model="formValues[q.field]">
-                          <option value="">请选择</option>
-                          <option v-for="opt in q.options" :key="optionValue(opt)" :value="optionValue(opt)">
-                            {{ optionLabel(opt) }}
-                          </option>
-                        </select>
-                      </label>
-                      <button type="button" class="builder-action builder-action--primary" @click="submitQuestionnaire(block)">
-                        {{ block.submit_label || '确认并继续' }}
-                      </button>
-                    </div>
-
-                    <details v-else-if="block.type === 'advanced_panel'" class="builder-card builder-details">
-                      <summary>高级设置</summary>
-                      <div class="builder-card__meta">可选项，默认可跳过。</div>
-                    </details>
-
-                    <div v-else-if="block.type === 'analysis_directions'" class="builder-card">
-                      <div class="builder-card__title">推荐分析方向</div>
-                      <button
-                        v-for="item in block.items"
-                        :key="item.title"
-                        type="button"
-                        class="builder-action"
-                        @click="sendBuilderMessage(item.prompt, { type: 'user_message', payload: { force_create: true } })"
-                      >
-                        {{ item.title }}
-                      </button>
-                    </div>
-
-                    <div v-else-if="block.type === 'knowledge_cards'" class="builder-card">
-                      <div v-for="card in block.items" :key="card.title" class="knowledge-card">
-                        <div class="builder-card__title">{{ card.title }}</div>
-                        <div class="builder-card__meta">这类业务知识会通过弹窗确认后保存到对应 Sheet 的表理解中。</div>
-                        <div class="builder-actions">
-                          <button type="button" class="builder-action builder-action--primary" @click="openKnowledgeDialog(card)">
-                            打开确认弹窗
-                          </button>
-                          <button type="button" class="builder-action" @click="handleAction({ type: card.card_type === 'user_preference' ? 'confirm_preference' : 'confirm_knowledge', payload: { accepted: false, card } })">
-                            不保存
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div v-else-if="block.type === 'sales_chart_plan'" class="builder-card">
-                      <div class="builder-card__title">将创建这些销售报表</div>
-                      <div class="sales-plan-list">
-                        <div v-for="item in block.items" :key="item.client_chart_id" class="sales-plan-item">
-                          <strong>{{ item.title }}</strong>
-                          <span>{{ item.business_type }} · {{ item.metric }} · 按 {{ item.dimension }} 看</span>
-                          <small>{{ item.chart_type_label }} · {{ item.category_name }}</small>
-                        </div>
-                      </div>
-                      <button type="button" class="builder-action" @click="openChartEditor(block)">
-                        调整报表方案
-                      </button>
-                    </div>
-
-                    <div v-else-if="block.type === 'companion_suggestions'" class="builder-card">
-                      <div class="builder-card__title">建议顺手补充</div>
-                      <div class="builder-card__meta">这些报表已经按当前语境准备好，点击即可创建。</div>
-                      <div class="builder-actions builder-actions--stack">
-                        <button
-                          v-for="item in block.items"
-                          :key="item.title"
-                          type="button"
-                          class="builder-action"
-                          @click="handleAction({ type: 'create_companion_chart', label: item.title, payload: { chart: item.chart } })"
-                        >
-                          {{ item.title }}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div v-else-if="block.type === 'completion_summary'" class="builder-card">
-                      <div class="builder-card__title">本轮上下文已保存</div>
-                      <div class="builder-card__meta">{{ block.summary?.business_context }}</div>
-                    </div>
-
-                    <div v-else-if="block.type === 'actions'" class="builder-actions">
-                      <button
-                        v-for="action in block.items"
-                        :key="action.label"
-                        type="button"
-                        class="builder-action"
-                        :class="{ 'builder-action--primary': action.type === 'confirm_generate' }"
-                        @click="handleAction(action)"
-                      >
-                        {{ action.label }}
-                      </button>
-                    </div>
-                  </template>
-                </div>
-              </div>
-            </div>
-            <!-- 统一思考状态（非 builder 模式专属） -->
-            <div v-if="sending && !messages.some(m => m.pending)" key="thinking" class="message assistant">
-              <div class="message-avatar">析</div>
-              <div class="message-bubble">
-                <div class="message-content message-content--thinking">
-                  <span class="thinking-pulse" aria-hidden="true" />
-                  <span class="thinking-text">{{ thinkingTexts[thinkingIndex] }}</span>
-                </div>
-              </div>
-            </div>
-          </TransitionGroup>
+          <MessageList
+            v-else
+            :messages="messages"
+            :sending="sending"
+            :thinking-index="thinkingIndex"
+            :thinking-texts="thinkingTexts"
+            @intent-action="handleIntentAction"
+            @action="handleAction"
+            @send-message="sendBuilderMessage"
+            @open-knowledge="openKnowledgeDialog"
+            @open-chart-editor="openChartEditor"
+            @submit-questionnaire="submitQuestionnaire"
+          />
         </div>
 
-        <footer class="chat-composer">
-          <div class="composer-box">
-            <textarea
-              v-model="composerText"
-              class="composer-input"
-              rows="1"
-              :disabled="sending"
-              :placeholder="activeMode === 'builder' ? '例如：我想看客户销售额 Top10，顺便看尾部客户…' : '输入问题…'"
-              @keydown.enter.prevent="sendComposer"
-            />
-            <button type="button" class="composer-send" :disabled="sending || !composerText.trim()" aria-label="发送" @click="sendComposer">
-              <el-icon><Promotion /></el-icon>
-            </button>
-          </div>
-        </footer>
+        <ChatComposer
+          v-model="composerText"
+          :sending="sending"
+          :placeholder="activeMode === 'builder' ? '例如：我想看客户销售额 Top10，顺便看尾部客户…' : '输入问题…'"
+          @send="sendComposer"
+        />
 
-        <div v-if="knowledgeDialog.open" class="modal-backdrop" @click.self="closeKnowledgeDialog">
-          <section class="builder-modal">
-            <header class="builder-modal__header">
-              <h3>确认业务知识</h3>
-              <button type="button" class="modal-close" @click="closeKnowledgeDialog">×</button>
-            </header>
-            <div class="builder-modal__body">
-              <label class="builder-field">
-                <span>业务表达</span>
-                <input v-model="knowledgeDialog.term" />
-              </label>
-              <label class="builder-field">
-                <span>实际含义</span>
-                <input v-model="knowledgeDialog.canonical" />
-              </label>
-              <label class="builder-field">
-                <span>保存到哪个 Sheet</span>
-                <select v-model="knowledgeDialog.tableName">
-                  <option v-for="opt in knowledgeDialog.sheetOptions" :key="opt.value" :value="opt.value">
-                    {{ opt.label }}
-                  </option>
-                </select>
-              </label>
-            </div>
-            <footer class="builder-modal__footer">
-              <button type="button" class="builder-action" @click="closeKnowledgeDialog">取消</button>
-              <button type="button" class="builder-action builder-action--primary" @click="confirmKnowledgeDialog">
-                确认添加
-              </button>
-            </footer>
-          </section>
-        </div>
+        <KnowledgeDialog
+          :open="knowledgeDialog.open"
+          :term="knowledgeDialog.term"
+          :canonical="knowledgeDialog.canonical"
+          :table-name="knowledgeDialog.tableName"
+          :sheet-options="knowledgeDialog.sheetOptions"
+          @close="closeKnowledgeDialog"
+          @confirm="confirmKnowledgeDialog"
+          @update:term="knowledgeDialog.term = $event"
+          @update:canonical="knowledgeDialog.canonical = $event"
+          @update:table-name="knowledgeDialog.tableName = $event"
+        />
 
-        <div v-if="chartEditor.open" class="modal-backdrop" @click.self="closeChartEditor">
-          <section class="builder-modal builder-modal--wide">
-            <header class="builder-modal__header">
-              <h3>调整报表方案</h3>
-              <button type="button" class="modal-close" @click="closeChartEditor">×</button>
-            </header>
-            <div class="builder-modal__body chart-editor">
-              <div v-for="chart in chartEditor.items" :key="chart.client_chart_id" class="chart-edit-row">
-                <label class="builder-field">
-                  <span>报表名称</span>
-                  <input v-model="chart.title" />
-                </label>
-                <label class="builder-field">
-                  <span>看什么指标</span>
-                  <select v-model="chart.metric.field">
-                    <option v-for="opt in chartEditor.fields.metrics" :key="opt.value" :value="opt.value">
-                      {{ opt.label }}
-                    </option>
-                  </select>
-                </label>
-                <label class="builder-field">
-                  <span>按什么看</span>
-                  <select v-model="chart.dimension">
-                    <option v-for="opt in chartEditor.fields.dimensions" :key="opt.value" :value="opt.value">
-                      {{ opt.label }}
-                    </option>
-                  </select>
-                </label>
-                <label class="builder-field">
-                  <span>报表样式</span>
-                  <select v-model="chart.chart_type">
-                    <option value="kpi_group">核心指标卡</option>
-                    <option value="ranking">排名榜</option>
-                    <option value="bar">对比图</option>
-                    <option value="line">趋势图</option>
-                    <option value="pie">占比图</option>
-                    <option value="combo">目标达成图</option>
-                    <option value="table">汇总表</option>
-                    <option value="detail_table">明细清单</option>
-                  </select>
-                </label>
-                <label class="builder-field">
-                  <span>放到哪里</span>
-                  <select v-model="chart.target_category_id">
-                    <option v-for="opt in chartEditor.categories" :key="opt.value" :value="opt.value">
-                      {{ opt.label }}
-                    </option>
-                  </select>
-                </label>
-              </div>
-            </div>
-            <footer class="builder-modal__footer">
-              <button type="button" class="builder-action" @click="closeChartEditor">取消</button>
-              <button type="button" class="builder-action builder-action--primary" @click="submitChartEditor">
-                保存方案
-              </button>
-            </footer>
-          </section>
-        </div>
+        <ChartEditorModal
+          :open="chartEditor.open"
+          :items="chartEditor.items"
+          :categories="chartEditor.categories"
+          :fields="chartEditor.fields"
+          @close="closeChartEditor"
+          @submit="submitChartEditor"
+        />
       </div>
     </main>
   </div>
@@ -442,15 +80,20 @@
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Promotion } from '@element-plus/icons-vue'
 import { CHAT_MODES, getChatMode, type ChatModeId } from '../constants/chatModes'
-import { biBuilderChat, deepResearchUrl, quickQA, getChatRecommendations } from '../api'
+import { biBuilderChat, deepResearchUrl, quickQA, getChatRecommendations, detectChatIntent } from '../api'
 import { getChatHistory, listFiles } from '../api/space'
 import {
   INSIGHT_PROMPT_GROUPS,
   DEEP_PROMPT_QUESTIONS,
   BUILDER_PROMPT_QUESTIONS
 } from '../mocks/chatPromptsMock'
+import ChatSidebar from '../components/chat/ChatSidebar.vue'
+import WelcomeScreen from '../components/chat/WelcomeScreen.vue'
+import MessageList from '../components/chat/MessageList.vue'
+import ChatComposer from '../components/chat/ChatComposer.vue'
+import KnowledgeDialog from '../components/chat/KnowledgeDialog.vue'
+import ChartEditorModal from '../components/chat/ChartEditorModal.vue'
 
 const chatModes = CHAT_MODES
 const insightGroups = ref<typeof INSIGHT_PROMPT_GROUPS>(INSIGHT_PROMPT_GROUPS)
@@ -465,6 +108,7 @@ const contentMode = ref<ChatModeId>('insight')
 const contentFading = ref(false)
 const activeSessionId = ref<string | null>(null)
 type ChatMessage = { role: string; content: string; blocks?: any[]; pending?: boolean }
+type PendingIntent = { text: string; mode: ChatModeId; fileId: string; spaceId: string }
 type ChatSessionItem = {
   id: string
   mode: ChatModeId
@@ -475,6 +119,7 @@ type ChatSessionItem = {
   messages?: ChatMessage[]
 }
 const messages = ref<ChatMessage[]>([])
+const pendingIntent = ref<PendingIntent | null>(null)
 const sessions = ref<ChatSessionItem[]>([])
 const chatRef = ref<HTMLElement>()
 const composerText = ref('')
@@ -492,7 +137,6 @@ const thinkingTexts = [
 ]
 
 const builderSessionId = ref<string | null>(null)
-const formValues = ref<Record<string, any>>({})
 const lastBuilderChartList = ref<any[]>([])
 const lastBuilderEditorPayload = ref<any>({})
 const knowledgeDialog = ref({
@@ -520,20 +164,6 @@ const filteredSessions = computed(() =>
     .filter((s) => s.mode === activeMode.value)
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
 )
-
-function formatSessionTime(iso: string) {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
-  const now = new Date()
-  const sameDay =
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
-  if (sameDay) {
-    return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
-  }
-  return d.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
-}
 
 async function onPromptClick(text: string) {
   if (activeMode.value !== contentMode.value) activeMode.value = contentMode.value
@@ -583,14 +213,14 @@ async function loadRecommendations() {
   }
 }
 
-async function sendBuilderMessage(text: string, event?: any) {
+async function sendBuilderMessage(text: string, event?: any, options?: { showUser?: boolean }) {
   const fileId = await latestFileId()
   if (!fileId) {
     ElMessage.warning('请先在数据页上传并分析文件')
     return
   }
   const eventType = event?.type || 'user_message'
-  if (eventType === 'user_message' && text) {
+  if (eventType === 'user_message' && text && options?.showUser !== false) {
     messages.value.push({ role: 'user', content: text })
   }
   const assistantMsg: ChatMessage = { role: 'assistant', content: builderLoadingText(eventType), blocks: [], pending: true }
@@ -630,25 +260,85 @@ async function sendBuilderMessage(text: string, event?: any) {
   }
 }
 
-async function sendChatMessage(text: string, event?: any) {
+async function sendChatMessage(text: string, event?: any, options?: { confirmed?: boolean; showUser?: boolean }) {
   if (activeMode.value === 'builder' || contentMode.value === 'builder') {
-    await sendBuilderMessage(text, event)
+    if (!options?.confirmed && !event) {
+      await requestIntentConfirmation(text)
+      return
+    }
+    await sendBuilderMessage(text, event, { showUser: options?.showUser })
     return
   }
   if (activeMode.value === 'deep' || contentMode.value === 'deep') {
-    await sendDeepMessage(text)
+    if (!options?.confirmed) {
+      await requestIntentConfirmation(text)
+      return
+    }
+    await sendDeepMessage(text, { showUser: options?.showUser })
     return
   }
-  await sendInsightMessage(text)
+  if (!options?.confirmed) {
+    await requestIntentConfirmation(text)
+    return
+  }
+  await sendInsightMessage(text, { showUser: options?.showUser })
 }
 
-async function sendInsightMessage(text: string) {
+async function requestIntentConfirmation(text: string) {
   const fileId = await latestFileId()
   if (!fileId) {
     ElMessage.warning('请先在数据页上传并分析文件')
     return
   }
+  const spaceId = localStorage.getItem(SPACE_KEY) || ''
   messages.value.push({ role: 'user', content: text })
+  sending.value = true
+  startThinkingCycle()
+  await nextTick()
+  scrollToBottom()
+  try {
+    const res = await detectChatIntent({
+      file_id: fileId,
+      question: text,
+      mode: activeMode.value,
+      space_id: spaceId,
+    })
+    const intent = res.data.data || {}
+    pendingIntent.value = { text, mode: activeMode.value, fileId, spaceId }
+    messages.value.push({
+      role: 'assistant',
+      content: intent.auto_execute ? '已识别问题类型，马上进入真实执行链路。' : '这个问题还不够明确，我需要先和你确认一下。',
+      blocks: [{ type: 'intent_confirmation', ...intent, source_text: text, source_mode: activeMode.value }],
+    })
+    await nextTick()
+    scrollToBottom()
+    if (intent.auto_execute) {
+      await executeConfirmedIntent(text, {
+        ...intent,
+        source_text: text,
+        source_mode: activeMode.value,
+      })
+    }
+  } catch (e: any) {
+    const detail = e.response?.data?.detail
+    const errText = (typeof detail === 'string' ? detail : null) || e.message || '意图识别失败'
+    ElMessage.error(errText)
+    messages.value.push({ role: 'assistant', content: errText })
+  } finally {
+    sending.value = false
+    stopThinkingCycle()
+    await nextTick()
+    scrollToBottom()
+  }
+}
+
+async function sendInsightMessage(text: string, options?: { showUser?: boolean }) {
+  const fileId = await latestFileId()
+  if (!fileId) {
+    ElMessage.warning('请先在数据页上传并分析文件')
+    return
+  }
+  if (options?.showUser !== false) messages.value.push({ role: 'user', content: text })
   sending.value = true
   startThinkingCycle()
   await nextTick()
@@ -677,6 +367,12 @@ async function sendInsightMessage(text: string) {
         content: '推荐追问：\n' + data.recommended_questions.map((q: string) => `- ${q}`).join('\n'),
       })
     }
+    if (Array.isArray(data.agent_steps) && data.agent_steps.length) {
+      blocks.unshift({
+        type: 'agent_steps',
+        items: data.agent_steps,
+      })
+    }
     messages.value.push({ role: 'assistant', content: data.answer || '已完成分析。', blocks })
     await loadHistory()
   } catch (e: any) {
@@ -695,7 +391,7 @@ async function sendInsightMessage(text: string) {
   }
 }
 
-async function sendDeepMessage(text: string) {
+async function sendDeepMessage(text: string, options?: { showUser?: boolean }) {
   const fileId = await latestFileId()
   if (!fileId) {
     ElMessage.warning('请先在数据页上传并分析文件')
@@ -704,7 +400,7 @@ async function sendDeepMessage(text: string) {
   const spaceId = localStorage.getItem(SPACE_KEY) || ''
   const sessionId = activeSessionId.value || crypto.randomUUID()
   activeSessionId.value = sessionId
-  messages.value.push({ role: 'user', content: text })
+  if (options?.showUser !== false) messages.value.push({ role: 'user', content: text })
   const assistantMsg: ChatMessage = { role: 'assistant', content: '开始深度洞察…' }
   messages.value.push(assistantMsg)
   sending.value = true
@@ -736,6 +432,7 @@ async function sendDeepMessage(text: string) {
     let buffer = ''
     let finalReport = ''
     const progress: string[] = []
+    const agentSteps: any[] = []
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
@@ -747,14 +444,25 @@ async function sendDeepMessage(text: string) {
         if (!line) continue
         const event = JSON.parse(line.slice(6))
         if (event.message) progress.push(event.message)
+        if (event.step && event.status && ['completed', 'confirmed', 'need_confirm'].includes(event.status)) {
+          const name = deepStepName(event.step)
+          if (!agentSteps.some((s) => s.name === name)) {
+            agentSteps.push({
+              name,
+              detail: event.status === 'need_confirm' ? '识别到需要澄清的条件，已纳入执行上下文' : event.message || '已完成',
+            })
+          }
+        }
         if (event.report) finalReport = event.report
         if (event.result?.report) finalReport = event.result.report
         assistantMsg.content = finalReport || progress.slice(-6).join('\n')
+        assistantMsg.blocks = agentSteps.length ? [{ type: 'agent_steps', items: agentSteps }] : []
       }
       await nextTick()
       scrollToBottom()
     }
     assistantMsg.content = finalReport || assistantMsg.content || '深度洞察完成。'
+    assistantMsg.blocks = agentSteps.length ? [{ type: 'agent_steps', items: agentSteps }] : assistantMsg.blocks
     await loadHistory()
   } catch (e: any) {
     ElMessage.error(e.message || '深度洞察处理失败')
@@ -765,6 +473,70 @@ async function sendDeepMessage(text: string) {
     await nextTick()
     scrollToBottom()
   }
+}
+
+function deepStepName(step: string) {
+  const map: Record<string, string> = {
+    keyword_match: '意图与关键词澄清',
+    role_decomposition: '多角色问题拆解',
+    sub_questions: '子问题筛选',
+    sql_generation: '查询生成',
+    sql_execution: '数据验证',
+    chart_generation: '证据图表生成',
+    report_generation: '洞察报告生成',
+    completed: '深度洞察完成',
+  }
+  return map[step] || step
+}
+
+async function handleIntentAction(action: any, block: any) {
+  if (sending.value || block.resolved) return
+  const sourceText = block.source_text || pendingIntent.value?.text || ''
+  if (action.type === 'cancel_intent') {
+    block.resolved = true
+    block.resolved_label = '已取消执行'
+    messages.value.push({ role: 'assistant', content: '已停止执行。你可以补充问题，或切换另一种问答类型重新发起。' })
+    pendingIntent.value = null
+    await nextTick()
+    scrollToBottom()
+    return
+  }
+  if (action.type === 'refine_intent') {
+    block.resolved = true
+    block.resolved_label = '等待补充问题'
+    composerText.value = sourceText
+    messages.value.push({ role: 'assistant', content: '请在输入框里补充指标、维度、时间范围或你希望的输出形式，我会重新识别。' })
+    pendingIntent.value = null
+    await nextTick()
+    scrollToBottom()
+    return
+  }
+  if (action.type !== 'confirm_intent') return
+
+  block.resolved = true
+  block.resolved_label = '已确认执行'
+  messages.value.push({ role: 'assistant', content: `已确认，进入「${block.mode_label || currentModeConfig.value.label}」执行链路。` })
+  pendingIntent.value = null
+  await executeConfirmedIntent(sourceText, block)
+}
+
+async function executeConfirmedIntent(text: string, block: any) {
+  const sourceMode = (block.source_mode || pendingIntent.value?.mode || activeMode.value) as ChatModeId
+  const normalizedMode = block.mode === 'quick' ? 'insight' : (block.mode || sourceMode)
+  const targetMode = (normalizedMode === 'quick' ? 'insight' : normalizedMode) as ChatModeId
+
+  if (targetMode === 'builder') {
+    messages.value.push({ role: 'assistant', content: '正在调用生成 BI Agent，识别已有图表并规划可写入的报表方案…' })
+    await sendBuilderMessage(text, undefined, { showUser: false })
+    return
+  }
+  if (targetMode === 'deep') {
+    messages.value.push({ role: 'assistant', content: '正在调用深度洞察 Agent，进入多步推理、SQL 查询和报告生成链路…' })
+    await sendDeepMessage(text, { showUser: false })
+    return
+  }
+  messages.value.push({ role: 'assistant', content: '正在调用快速问答 LLM Agent，并根据生成的 SQL 执行真实数据查询…' })
+  await sendInsightMessage(text, { showUser: false })
 }
 
 async function handleAction(action: any) {
@@ -812,11 +584,7 @@ async function loadHistory() {
   })
 }
 
-async function submitQuestionnaire(block: any) {
-  const values: Record<string, any> = {}
-  for (const q of block.questions || []) {
-    if (formValues.value[q.field]) values[q.field] = formValues.value[q.field]
-  }
+async function submitQuestionnaire(_block: any, values: Record<string, any>) {
   await sendBuilderMessage('已补充必要信息', {
     type: 'submit_questionnaire',
     payload: { form_values: values },
@@ -910,8 +678,8 @@ function closeChartEditor() {
   chartEditor.value.open = false
 }
 
-async function submitChartEditor() {
-  const chartList = chartEditor.value.items.map((chart) => ({
+async function submitChartEditor(items: any[]) {
+  const chartList = items.map((chart) => ({
     ...chart,
     dimensions: chart.dimension ? [chart.dimension] : [],
     metric: { ...(chart.metric || {}), label: chart.metric?.field || chart.metric?.label || '' },
@@ -923,29 +691,6 @@ async function submitChartEditor() {
   })
 }
 
-function optionLabel(opt: any) {
-  return typeof opt === 'string' ? opt : opt.label
-}
-
-function optionValue(opt: any) {
-  return typeof opt === 'string' ? opt : opt.value
-}
-
-function renderMarkdown(content: string) {
-  if (!content) return ''
-  const lines = content.trim().split('\n')
-  if (lines.length >= 2 && lines[0].includes('|') && lines[1].includes('---')) {
-    const headers = lines[0].split('|').map((s) => s.trim()).filter(Boolean)
-    const rows = lines.slice(2).map((line) => line.split('|').map((s) => s.trim()).filter(Boolean))
-    return `<table class="builder-md-table"><thead><tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`
-  }
-  return escapeHtml(content).replace(/\n/g, '<br>')
-}
-
-function escapeHtml(s: string) {
-  return String(s).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch] || ch))
-}
-
 function switchMode(mode: ChatModeId) {
   if (mode === activeMode.value && !contentFading.value) return
 
@@ -953,8 +698,8 @@ function switchMode(mode: ChatModeId) {
   activeMode.value = mode
   activeSessionId.value = null
   messages.value = []
+  pendingIntent.value = null
   if (mode !== 'builder') builderSessionId.value = null
-  formValues.value = {}
 
   // 尝试加载动态推荐问题
   loadRecommendations()
@@ -1034,478 +779,6 @@ onUnmounted(() => {
   font-family: var(--font-family);
 }
 
-.chat-sidebar {
-  width: 280px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  background: var(--chat-sidebar);
-  border-right: 1px solid var(--chat-border);
-  overflow: hidden;
-}
-
-.mode-switcher {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 14px 12px;
-  border-bottom: 1px solid var(--chat-border);
-}
-
-.mode-btn {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 8px 10px;
-  text-align: left;
-  font-family: inherit;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 12px;
-  cursor: pointer;
-  transition: background 0.2s ease, border-color 0.2s ease;
-}
-
-.mode-btn:hover {
-  background: rgba(255, 255, 255, 0.75);
-}
-
-.mode-btn--active {
-  background: var(--chat-surface);
-  border-color: var(--chat-border);
-  box-shadow: 0 1px 3px rgba(28, 25, 23, 0.04);
-}
-
-.mode-btn__icon {
-  flex-shrink: 0;
-  width: 34px;
-  height: 34px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 10px;
-  font-size: 16px;
-}
-
-.mode-btn__text {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.mode-btn__label {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--chat-text);
-}
-
-.mode-btn__desc {
-  font-size: 11px;
-  color: var(--chat-faint);
-  line-height: 1.35;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sessions-section {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.sessions-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px 8px;
-}
-
-.sessions-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--chat-muted);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.sessions-count {
-  font-size: 11px;
-  color: var(--chat-faint);
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(28, 25, 23, 0.05);
-}
-
-.session-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 4px 10px 12px;
-}
-
-.session-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  width: 100%;
-  padding: 9px 10px;
-  margin-bottom: 4px;
-  text-align: left;
-  font-family: inherit;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  cursor: pointer;
-  transition: background 0.15s ease;
-}
-
-.session-item:hover {
-  background: rgba(255, 255, 255, 0.7);
-}
-
-.session-item--active {
-  background: var(--chat-surface);
-  border-color: var(--chat-border);
-}
-
-.session-mode-icon {
-  flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  font-size: 14px;
-}
-
-.session-body {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.session-title {
-  font-size: 13px;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-preview {
-  font-size: 12px;
-  color: var(--chat-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-time {
-  flex-shrink: 0;
-  font-size: 11px;
-  color: var(--chat-faint);
-}
-
-.sessions-empty {
-  padding: 28px 16px;
-  text-align: center;
-  font-size: 13px;
-  color: var(--chat-muted);
-}
-
-.sessions-empty p {
-  margin: 0;
-}
-
-.builder-blocks {
-  display: grid;
-  gap: 10px;
-  margin-top: 10px;
-}
-
-.builder-card {
-  padding: 12px;
-  border: 1px solid var(--chat-border);
-  border-radius: 8px;
-  background: rgba(255, 252, 250, 0.78);
-}
-
-.builder-card__title {
-  font-size: 13px;
-  font-weight: 650;
-  color: var(--chat-text);
-  margin-bottom: 4px;
-}
-
-.builder-card__meta,
-.builder-card__reason {
-  font-size: 12px;
-  color: var(--chat-muted);
-  line-height: 1.45;
-}
-
-.builder-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.builder-actions--stack {
-  flex-direction: column;
-  align-items: flex-start;
-}
-
-.builder-action {
-  min-height: 30px;
-  padding: 0 11px;
-  border: 1px solid var(--chat-chip-border);
-  border-radius: 8px;
-  background: var(--chat-chip-bg);
-  color: var(--chat-accent);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.builder-action--primary {
-  background: var(--chat-accent);
-  color: #fff;
-  border-color: var(--chat-accent);
-}
-
-.builder-field {
-  display: grid;
-  gap: 5px;
-  margin: 8px 0;
-  font-size: 12px;
-  color: var(--chat-muted);
-}
-
-.builder-field select {
-  height: 32px;
-  border: 1px solid var(--chat-border);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--chat-text);
-  padding: 0 8px;
-  font: inherit;
-}
-
-.builder-field input {
-  height: 34px;
-  border: 1px solid var(--chat-border);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--chat-text);
-  padding: 0 9px;
-  font: inherit;
-}
-
-.message-content--pending {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--chat-muted);
-}
-
-.thinking-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--chat-accent);
-  box-shadow: 12px 0 0 rgba(198, 97, 63, 0.35), 24px 0 0 rgba(198, 97, 63, 0.2);
-  animation: thinkingPulse 1s ease-in-out infinite;
-}
-
-@keyframes thinkingPulse {
-  0%, 100% { opacity: 0.35; transform: translateY(0); }
-  50% { opacity: 1; transform: translateY(-1px); }
-}
-
-.message-content--thinking {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--chat-muted);
-  min-height: 22px;
-}
-
-.thinking-pulse {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--chat-accent);
-  box-shadow: 0 0 0 0 rgba(198, 97, 63, 0.45);
-  animation: pulse-ring 1.8s ease-out infinite;
-  flex-shrink: 0;
-}
-
-@keyframes pulse-ring {
-  0% { box-shadow: 0 0 0 0 rgba(198, 97, 63, 0.45); }
-  70% { box-shadow: 0 0 0 10px rgba(198, 97, 63, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(198, 97, 63, 0); }
-}
-
-.thinking-text {
-  font-size: 13px;
-  color: #8B7355;
-  font-weight: 400;
-  letter-spacing: 0.01em;
-}
-
-.sales-plan-list {
-  display: grid;
-  gap: 8px;
-  margin: 8px 0 10px;
-}
-
-.sales-plan-item {
-  display: grid;
-  gap: 2px;
-  padding: 9px 10px;
-  border: 1px solid var(--chat-border);
-  border-radius: 8px;
-  background: #fff;
-}
-
-.sales-plan-item strong {
-  font-size: 13px;
-  color: var(--chat-text);
-}
-
-.sales-plan-item span,
-.sales-plan-item small {
-  font-size: 12px;
-  color: var(--chat-muted);
-}
-
-.modal-backdrop {
-  position: absolute;
-  inset: 0;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 22px;
-  background: rgba(43, 40, 37, 0.24);
-}
-
-.builder-modal {
-  width: min(460px, 100%);
-  max-height: min(680px, 92%);
-  display: flex;
-  flex-direction: column;
-  background: var(--chat-surface);
-  border: 1px solid var(--chat-border);
-  border-radius: 10px;
-  box-shadow: 0 18px 44px rgba(43, 40, 37, 0.16);
-  overflow: hidden;
-}
-
-.builder-modal--wide {
-  width: min(860px, 100%);
-}
-
-.builder-modal__header,
-.builder-modal__footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--chat-border);
-}
-
-.builder-modal__footer {
-  justify-content: flex-end;
-  border-top: 1px solid var(--chat-border);
-  border-bottom: 0;
-}
-
-.builder-modal__header h3 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 650;
-}
-
-.builder-modal__body {
-  padding: 14px 16px;
-  overflow-y: auto;
-}
-
-.modal-close {
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--chat-muted);
-  font-size: 20px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.chart-editor {
-  display: grid;
-  gap: 12px;
-}
-
-.chart-edit-row {
-  display: grid;
-  grid-template-columns: 1.3fr 1fr 1fr 1fr 1fr;
-  gap: 10px;
-  padding: 10px;
-  border: 1px solid var(--chat-border);
-  border-radius: 8px;
-  background: rgba(255, 252, 250, 0.78);
-}
-
-.preview-table-wrap,
-.builder-markdown {
-  overflow-x: auto;
-}
-
-:deep(.builder-md-table),
-.preview-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-:deep(.builder-md-table th),
-:deep(.builder-md-table td),
-.preview-table th,
-.preview-table td {
-  border: 1px solid var(--chat-border);
-  padding: 6px 8px;
-  text-align: left;
-  white-space: nowrap;
-}
-
-:deep(.builder-md-table th),
-.preview-table th {
-  background: rgba(198, 97, 63, 0.08);
-  color: var(--chat-text);
-}
-
-.builder-details summary {
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.knowledge-card + .knowledge-card {
-  margin-top: 10px;
-}
-
-/* ========== Main ========== */
 .chat-main {
   flex: 1;
   min-width: 0;
@@ -1534,277 +807,5 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   padding: 8px 24px 12px;
-}
-
-.chat-welcome {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  max-width: 920px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.welcome-stage {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  isolation: isolate;
-  overflow: hidden;
-}
-
-.welcome-hero-layer {
-  position: absolute;
-  left: 50%;
-  top: 26%;
-  z-index: 0;
-  width: min(460px, 88vw);
-  height: min(400px, 46vh);
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-}
-
-.welcome-hero {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  object-position: center bottom;
-  opacity: 0;
-  transition: opacity 0.32s ease;
-  will-change: opacity;
-}
-
-.welcome-hero--visible {
-  opacity: 1;
-}
-
-.welcome-content {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  padding-top: 148px;
-  transition: opacity 0.22s ease;
-}
-
-.welcome-content--fading {
-  opacity: 0.35;
-  pointer-events: none;
-}
-
-.welcome-title {
-  margin: 0 0 10px;
-  font-size: 26px;
-  font-weight: 500;
-  letter-spacing: -0.03em;
-  color: var(--chat-text);
-  line-height: 1.25;
-}
-
-.welcome-desc {
-  margin: 0 0 20px;
-  font-size: 15px;
-  color: var(--chat-muted);
-  line-height: 1.55;
-  max-width: 520px;
-  font-weight: 400;
-}
-
-.prompt-layout {
-  width: 100%;
-  max-width: 720px;
-}
-
-.prompt-layout--grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.prompt-card {
-  text-align: left;
-  background: var(--chat-card-bg);
-  border: 1.5px solid var(--chat-card-border);
-  border-radius: 14px;
-  padding: 14px 12px 12px;
-  box-shadow: 0 1px 4px rgba(198, 97, 63, 0.05);
-}
-
-.prompt-card--single {
-  max-width: 680px;
-  margin: 0 auto;
-  width: 100%;
-  padding: 16px 14px 14px;
-}
-
-.prompt-card__title {
-  margin: 0 0 12px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--chat-orange-soft);
-  letter-spacing: 0;
-}
-
-.prompt-card__list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.prompt-chip {
-  width: 100%;
-  padding: 14px 16px;
-  font-size: 14px;
-  line-height: 1.5;
-  font-family: inherit;
-  text-align: left;
-  color: var(--chat-orange);
-  background: var(--chat-chip-bg);
-  border: 1.5px solid var(--chat-chip-border);
-  border-radius: 12px;
-  cursor: pointer;
-  box-shadow: 0 1px 3px rgba(198, 97, 63, 0.06);
-  transition:
-    background 0.18s ease,
-    border-color 0.18s ease,
-    box-shadow 0.18s ease,
-    color 0.18s ease;
-}
-
-.prompt-chip:hover {
-  color: #A8522F;
-  background: var(--chat-chip-hover);
-  border-color: var(--chat-chip-border-hover);
-  box-shadow: 0 2px 10px rgba(198, 97, 63, 0.1);
-}
-
-.prompt-chip--long {
-  line-height: 1.6;
-  padding: 16px 18px;
-}
-
-.msg-list {
-  display: flex;
-  flex-direction: column;
-  max-width: 720px;
-  margin: 0 auto;
-  width: 100%;
-}
-
-.message {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 20px;
-  max-width: 85%;
-}
-
-.message.user {
-  margin-left: auto;
-  flex-direction: row-reverse;
-}
-
-.message-avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 600;
-  flex-shrink: 0;
-  background: rgba(217, 119, 87, 0.1);
-  color: var(--chat-accent);
-}
-
-.message.assistant .message-avatar {
-  background: rgba(28, 25, 23, 0.06);
-  color: var(--chat-muted);
-}
-
-.message-bubble {
-  padding: 12px 16px;
-  border-radius: 16px;
-  font-size: 14px;
-  line-height: 1.65;
-}
-
-.message.user .message-bubble {
-  background: var(--chat-accent);
-  color: #fff;
-}
-
-.message.assistant .message-bubble {
-  background: var(--chat-surface);
-  border: 1px solid var(--chat-border);
-}
-
-.chat-composer {
-  flex-shrink: 0;
-  padding: 12px 24px 16px;
-  border-top: 1px solid var(--chat-border);
-  background: rgba(250, 248, 245, 0.92);
-}
-
-.composer-box {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 10px 12px 10px 16px;
-  background: var(--chat-surface);
-  border: 1px solid var(--chat-border);
-  border-radius: 16px;
-  opacity: 0.75;
-}
-
-.composer-input {
-  flex: 1;
-  min-height: 24px;
-  padding: 4px 0;
-  font-size: 14px;
-  font-family: inherit;
-  border: none;
-  outline: none;
-  resize: none;
-  background: transparent;
-  color: var(--chat-text);
-}
-
-.composer-input:disabled {
-  cursor: not-allowed;
-}
-
-.composer-input::placeholder {
-  color: var(--chat-faint);
-}
-
-.composer-send {
-  width: 36px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: 10px;
-  background: var(--chat-border);
-  color: var(--chat-faint);
-  cursor: not-allowed;
-}
-
-@media (max-width: 960px) {
-  .prompt-layout--grid {
-    grid-template-columns: 1fr;
-  }
 }
 </style>

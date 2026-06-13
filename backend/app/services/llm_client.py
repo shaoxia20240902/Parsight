@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from app.config import LLM_MAX_TOKENS, LLM_TEMPERATURE
+from app.utils.json_utils import extract_json
 
 # 全局动态配置（仅管理端启用项，启动或 activate 时注入）
 _dynamic_config: Optional[Dict[str, Any]] = None
@@ -429,32 +430,8 @@ class LLMClient:
         return injected
 
     def _extract_json(self, text: str) -> Dict[str, Any]:
-        """从文本中提取 JSON 对象"""
-        # 尝试找到最外层的 JSON 对象
-        text = text.strip()
-
-        # 移除 markdown 代码块标记
-        if text.startswith("```"):
-            lines = text.split("\n")
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            text = "\n".join(lines)
-
-        # 尝试直接解析
+        """从文本中提取 JSON 对象（容错封装）。"""
         try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-
-        # 尝试找到 JSON 对象边界
-        brace_start = text.find("{")
-        brace_end = text.rfind("}")
-        if brace_start != -1 and brace_end != -1 and brace_end > brace_start:
-            try:
-                return json.loads(text[brace_start:brace_end + 1])
-            except json.JSONDecodeError:
-                pass
-
-        raise ValueError(f"无法从 LLM 响应中提取 JSON: {text[:500]}...")
+            return extract_json(text, max_preview=500)
+        except ValueError as e:
+            raise ValueError(f"无法从 LLM 响应中提取 JSON: {text[:500]}...") from e

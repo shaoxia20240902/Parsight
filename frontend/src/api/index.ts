@@ -50,6 +50,20 @@ export const quickQA = (
   )
 }
 
+export const detectChatIntent = (payload: {
+  file_id: string
+  question: string
+  mode: string
+  space_id?: string | null
+}) => {
+  return api.post('/chat/intent', {
+    file_id: payload.file_id,
+    question: payload.question,
+    mode: payload.mode,
+    space_id: payload.space_id || null,
+  })
+}
+
 export const deepResearchUrl = '/api/chat/deep-research'
 
 export const biBuilderChat = (payload: {

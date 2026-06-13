@@ -9,12 +9,9 @@ Date:   2026-05-14
 """
 
 import json
-import logging
 from typing import Any, Dict, List
 
 from app.agents.base import BaseAgent
-from app.services.llm_client import LLMClient
-logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────
@@ -88,9 +85,6 @@ AGENT_L_SYSTEM_PROMPT = """你是 BI 看板构建顾问，帮助用户通过自�
 class LocalDashboardBuilderAgent(BaseAgent):
     """看板构建助手 - 本地 LLM 实现"""
 
-    def __init__(self):
-        self.llm = LLMClient()
-
     async def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         self.validate_input(input_data, ["question", "table_schemas", "sheets_summary"])
 
@@ -142,7 +136,7 @@ class LocalDashboardBuilderAgent(BaseAgent):
             {"role": "user", "content": user_msg},
         ]
 
-        result = await self.llm.chat_completion_json(
+        result = await self._call_llm_with_retry(
             messages=messages,
             temperature=0.4,
             max_tokens=2048,
@@ -229,9 +223,6 @@ AGENT_M_SYSTEM_PROMPT = """你是看板布局生成专家。根据用户确认�
 class LocalDashboardLayoutAgent(BaseAgent):
     """看板布局生成智能体 - 本地 LLM 实现"""
 
-    def __init__(self):
-        self.llm = LLMClient()
-
     async def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         self.validate_input(input_data, ["config", "table_schemas"])
 
@@ -274,7 +265,7 @@ class LocalDashboardLayoutAgent(BaseAgent):
             {"role": "user", "content": user_msg},
         ]
 
-        result = await self.llm.chat_completion_json(
+        result = await self._call_llm_with_retry(
             messages=messages,
             temperature=0.3,
             max_tokens=4096,

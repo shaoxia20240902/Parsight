@@ -11,7 +11,6 @@ import json
 from typing import Any, Dict, List
 
 from app.agents.base import BaseAgent
-from app.services.llm_client import LLMClient
 
 BI_BUILDER_INTENT_ROUTER_PROMPT = """你是 BI 构建者的意图路由器。
 只输出 JSON：
@@ -110,16 +109,13 @@ class _LocalBIBuilderJSONAgent(BaseAgent):
     temperature = 0.2
     max_tokens = 2048
 
-    def __init__(self):
-        self.llm = LLMClient()
-
     async def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         self.validate_input(input_data, self.required_keys)
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": json.dumps(input_data, ensure_ascii=False, default=str)},
         ]
-        return await self.llm.chat_completion_json(
+        return await self._call_llm_with_retry(
             messages=messages,
             temperature=self.temperature,
             max_tokens=self.max_tokens,

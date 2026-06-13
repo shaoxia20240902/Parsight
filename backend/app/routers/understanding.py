@@ -20,6 +20,7 @@ from app.services.bi_understanding_tasks import (
     _generating_tables as _bg_generating_tables,
     _generation_progress,
 )
+from app.utils.task_manager import task_manager
 
 router = APIRouter(prefix="/api/data", tags=["understanding"])
 logger = logging.getLogger(__name__)
@@ -259,7 +260,10 @@ async def generate_table_understanding_stream(
             _generation_progress[table_name]["status"] = "verifying"
             _generation_progress[table_name]["updated_at"] = time.time()
             # 后台启动核对
-            asyncio.create_task(run_understanding_verification(table_name))
+            task_manager.start(
+                f"understanding_verification:{table_name}",
+                run_understanding_verification(table_name),
+            )
 
             yield f"data: {json.dumps({'phase': 'verifying', 'data': {'content': full_content, 'verification_status': 'verifying', 'updated_at': updated_at}}, ensure_ascii=False)}\n\n"
             async for event in _wait_verified_stream(db_service, table_name, len(full_content)):

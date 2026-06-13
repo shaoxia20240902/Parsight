@@ -1,4 +1,6 @@
 import axios from 'axios'
+import { getAuthHeaders } from '../utils/auth'
+import { createSSEStream } from './sse'
 
 const api = axios.create({
   baseURL: '/api',
@@ -101,64 +103,36 @@ export const reimportFileStream = (
   mode: 'overwrite' | 'insert',
   onProgress: (event: any) => void
 ): Promise<any> => {
-  return new Promise((resolve, reject) => {
-    const token = localStorage.getItem('xlsx-bi-token')
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('space_id', spaceId)
-    formData.append('mode', mode)
+  return new Promise(async (resolve, reject) => {
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('space_id', spaceId)
+      formData.append('mode', mode)
 
-    fetch('/api/upload/reimport/stream', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      body: formData
-    }).then(async (response) => {
-      if (!response.ok) {
-        let detail = '更新失败'
-        try {
-          const err = await response.json()
-          detail = err.detail || detail
-        } catch { /* ignore */ }
-        reject(new Error(detail))
-        return
-      }
-
-      const reader = response.body?.getReader()
-      if (!reader) {
-        reject(new Error('不支持流式响应'))
-        return
-      }
-
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          try {
-            const data = JSON.parse(line.slice(6))
-            onProgress(data)
-            if (data.step === 'done') resolve(data.data)
-            if (data.step === 'error') reject(new Error(data.message || '更新失败'))
-          } catch { /* skip */ }
+      for await (const { data } of createSSEStream('/api/upload/reimport/stream', {
+        body: formData,
+      })) {
+        onProgress(data)
+        if (data.step === 'done') {
+          resolve(data.data)
+          return
+        }
+        if (data.step === 'error') {
+          reject(new Error(data.message || '更新失败'))
+          return
         }
       }
-    }).catch(reject)
+    } catch (e) {
+      reject(e)
+    }
   })
 }
 
 /** 导出空间数据为 XLSX */
 export const exportSpaceData = async (spaceId: string, filename?: string) => {
-  const token = localStorage.getItem('xlsx-bi-token')
   const response = await fetch(`/api/data/export?space_id=${encodeURIComponent(spaceId)}`, {
-    headers: { Authorization: `Bearer ${token}` }
+    headers: getAuthHeaders(),
   })
   if (!response.ok) {
     let detail = '导出失败'
@@ -187,73 +161,38 @@ export const generateTableUnderstandingStream = (
   onDone?: (data: { content: string; verification_status: string; updated_at?: string }) => void,
   onError?: (message: string) => void
 ): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    const token = localStorage.getItem('xlsx-bi-token')
-    const url = `/api/data/table/${encodeURIComponent(tableName)}/understanding/stream?regenerate=${regenerate}`
-
-    fetch(url, {
-      method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {}
-    }).then(async (response) => {
-      if (!response.ok) {
-        let detail = '生成失败'
-        try {
-          const err = await response.json()
-          detail = err.detail || detail
-        } catch { /* ignore */ }
-        reject(new Error(detail))
-        return
-      }
-
-      const reader = response.body?.getReader()
-      if (!reader) {
-        reject(new Error('不支持流式响应'))
-        return
-      }
-
-      const decoder = new TextDecoder()
-      let buffer = ''
+  return new Promise(async (resolve, reject) => {
+    try {
+      const url = `/api/data/table/${encodeURIComponent(tableName)}/understanding/stream?regenerate=${regenerate}`
       let fullContent = ''
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          try {
-            const data = JSON.parse(line.slice(6))
-            if (data.chunk) {
-              fullContent += data.chunk
-              onChunk(data.chunk)
-            }
-            if (data.phase && data.data) {
-              onDone?.(data.data)
-            }
-            if (data.done) {
-              onDone?.(data.data || { content: fullContent, verification_status: 'verifying' })
-              resolve()
-              return
-            }
-            if (data.error) {
-              onError?.(data.error)
-              reject(new Error(data.error))
-              return
-            }
-            if (data.status === 'generating') {
-              reject(new Error('GENERATING_IN_BACKGROUND'))
-              return
-            }
-          } catch { /* skip */ }
+      for await (const { data } of createSSEStream(url)) {
+        if (data.chunk) {
+          fullContent += data.chunk
+          onChunk(data.chunk)
+        }
+        if (data.phase && data.data) {
+          onDone?.(data.data)
+        }
+        if (data.done) {
+          onDone?.(data.data || { content: fullContent, verification_status: 'verifying' })
+          resolve()
+          return
+        }
+        if (data.error) {
+          onError?.(data.error)
+          reject(new Error(data.error))
+          return
+        }
+        if (data.status === 'generating') {
+          reject(new Error('GENERATING_IN_BACKGROUND'))
+          return
         }
       }
-
       resolve()
-    }).catch(reject)
+    } catch (e) {
+      reject(e)
+    }
   })
 }
 
@@ -265,130 +204,63 @@ export const generateRelationsStream = (
   onDone?: (data: { content: string; content_initial?: string; verification_status: string; updated_at?: string }) => void,
   onError?: (message: string) => void
 ): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    const token = localStorage.getItem('xlsx-bi-token')
-    const url = `/api/data/relations/stream?space_id=${encodeURIComponent(spaceId)}&regenerate=${regenerate}`
-
-    fetch(url, {
-      method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {}
-    }).then(async (response) => {
-      if (!response.ok) {
-        let detail = '生成失败'
-        try {
-          const err = await response.json()
-          detail = err.detail || detail
-        } catch { /* ignore */ }
-        reject(new Error(detail))
-        return
-      }
-
-      const reader = response.body?.getReader()
-      if (!reader) {
-        reject(new Error('不支持流式响应'))
-        return
-      }
-
-      const decoder = new TextDecoder()
-      let buffer = ''
+  return new Promise(async (resolve, reject) => {
+    try {
+      const url = `/api/data/relations/stream?space_id=${encodeURIComponent(spaceId)}&regenerate=${regenerate}`
       let fullContent = ''
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          try {
-            const data = JSON.parse(line.slice(6))
-            if (data.chunk) {
-              fullContent += data.chunk
-              onChunk(data.chunk)
-            }
-            if (data.phase && data.data) {
-              onDone?.(data.data)
-            }
-            if (data.done) {
-              onDone?.(data.data || { content: fullContent, verification_status: 'completed' })
-              resolve()
-              return
-            }
-            if (data.error) {
-              onError?.(data.error)
-              reject(new Error(data.error))
-              return
-            }
-          } catch { /* skip */ }
+      for await (const { data } of createSSEStream(url)) {
+        if (data.chunk) {
+          fullContent += data.chunk
+          onChunk(data.chunk)
+        }
+        if (data.phase && data.data) {
+          onDone?.(data.data)
+        }
+        if (data.done) {
+          onDone?.(data.data || { content: fullContent, verification_status: 'completed' })
+          resolve()
+          return
+        }
+        if (data.error) {
+          onError?.(data.error)
+          reject(new Error(data.error))
+          return
         }
       }
-
       resolve()
-    }).catch(reject)
+    } catch (e) {
+      reject(e)
+    }
   })
 }
 
 /** SSE 流式上传文件 */
 export const uploadFileStream = (file: File, spaceId: string, onProgress: (event: any) => void): Promise<any> => {
-  return new Promise((resolve, reject) => {
-    const token = localStorage.getItem('xlsx-bi-token')
-    const formData = new FormData()
-    formData.append('file', file)
-    if (spaceId) {
-      formData.append('space_id', spaceId)
-    }
-
-    fetch('/api/upload/stream', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`
-      },
-      body: formData
-    }).then(async (response) => {
-      if (!response.ok) {
-        const err = await response.json()
-        reject(new Error(err.detail || '上传失败'))
-        return
+  return new Promise(async (resolve, reject) => {
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      if (spaceId) {
+        formData.append('space_id', spaceId)
       }
 
-      const reader = response.body?.getReader()
-      if (!reader) {
-        reject(new Error('不支持流式响应'))
-        return
-      }
-
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6))
-              onProgress(data)
-              if (data.step === 'done') {
-                resolve(data.data)
-              }
-              if (data.step === 'error') {
-                reject(new Error(data.message))
-              }
-            } catch (e) {
-              // 跳过解析失败的行
-            }
-          }
+      for await (const { data } of createSSEStream('/api/upload/stream', {
+        body: formData,
+      })) {
+        onProgress(data)
+        if (data.step === 'done') {
+          resolve(data.data)
+          return
+        }
+        if (data.step === 'error') {
+          reject(new Error(data.message || '上传失败'))
+          return
         }
       }
-    }).catch(reject)
+    } catch (e) {
+      reject(e)
+    }
   })
 }
 

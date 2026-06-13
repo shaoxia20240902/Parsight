@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>超级问答智能体设计图</title>
+  <style>
+    :root {
+      --ink: #24211f;
+      --muted: #6c625c;
+      --line: #e6ded8;
+      --surface: #fffdfb;
+      --soft: #fbf6f2;
+      --accent: #c6613f;
+      --blue: #2f6f8f;
+      --green: #43745a;
+      --gold: #9a6a1f;
+      --shadow: 0 16px 38px rgba(49, 36, 28, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      color: var(--ink);
+      background: linear-gradient(180deg, #fff 0%, #faf7f3 52%, #fff 100%);
+    }
+
+    .page {
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 34px 28px 56px;
+    }
+
+    header {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 34px;
+      line-height: 1.16;
+      letter-spacing: -0.02em;
+    }
+
+    .lead {
+      max-width: 820px;
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.65;
+      font-size: 15px;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 18px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.86);
+      box-shadow: var(--shadow);
+      padding: 20px;
+    }
+
+    .panel h2 {
+      margin: 0 0 14px;
+      font-size: 20px;
+    }
+
+    .main-flow {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(120px, 1fr));
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .node {
+      position: relative;
+      min-height: 132px;
+      display: grid;
+      align-content: start;
+      gap: 8px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+    }
+
+    .node::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -13px;
+      width: 13px;
+      height: 2px;
+      background: var(--accent);
+    }
+
+    .node::before {
+      content: "";
+      position: absolute;
+      top: calc(50% - 4px);
+      right: -17px;
+      border-left: 8px solid var(--accent);
+      border-top: 5px solid transparent;
+      border-bottom: 5px solid transparent;
+      z-index: 2;
+    }
+
+    .node:last-child::after,
+    .node:last-child::before { display: none; }
+
+    .num {
+      width: 28px;
+      height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 9px;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 800;
+      font-size: 13px;
+    }
+
+    .node h3 {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.3;
+    }
+
+    .node p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .branch-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+
+    .branch {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px;
+      background: var(--soft);
+    }
+
+    .branch h3 {
+      margin: 0 0 10px;
+      font-size: 17px;
+    }
+
+    .branch ol {
+      margin: 0;
+      padding-left: 20px;
+      color: var(--muted);
+      line-height: 1.7;
+      font-size: 13px;
+    }
+
+    .branch.quick { border-top: 5px solid var(--accent); }
+    .branch.deep { border-top: 5px solid var(--blue); }
+    .branch.builder { border-top: 5px solid var(--green); }
+
+    .contract {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      padding: 14px;
+    }
+
+    .card strong {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--ink);
+      font-size: 14px;
+    }
+
+    .card span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .note {
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    @media (max-width: 960px) {
+      .main-flow,
+      .branch-grid,
+      .contract {
+        grid-template-columns: 1fr;
+      }
+
+      .node::after,
+      .node::before {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <h1>超级问答智能体：快速问答、深度洞察、生成 BI</h1>
+      <p class="lead">
+        三种 Chat 类型共用“意图识别与用户确认”入口。用户提出问题后，系统先判断是否继续、适合哪条执行链路、命中哪些数据依据以及可能的歧义；用户确认后才进入真实查询、深度分析或 BI 写入流程。
+      </p>
+      <div class="legend">
+        <span class="pill"><i class="dot"></i>前端确认卡</span>
+        <span class="pill"><i class="dot" style="background: var(--blue)"></i>ReAct 深度链路</span>
+        <span class="pill"><i class="dot" style="background: var(--green)"></i>BI 写入链路</span>
+        <span class="pill"><i class="dot" style="background: var(--gold)"></i>用户可中断/补充</span>
+      </div>
+    </header>
+
+    <section class="panel">
+      <h2>统一交互主流程</h2>
+      <div class="main-flow">
+        <article class="node">
+          <span class="num">1</span>
+          <h3>用户输入问题</h3>
+          <p>用户在快速问答、深度洞察或生成 BI 中输入自然语言需求。</p>
+        </article>
+        <article class="node">
+          <span class="num">2</span>
+          <h3>装配数据上下文</h3>
+          <p>读取文件状态、Sheet 摘要、字段类型、关键维度和指标。</p>
+        </article>
+        <article class="node">
+          <span class="num">3</span>
+          <h3>意图识别</h3>
+          <p>判断模式、置信度、命中字段、潜在歧义和推荐执行计划。</p>
+        </article>
+        <article class="node">
+          <span class="num">4</span>
+          <h3>用户确认</h3>
+          <p>前端展示确认卡：继续执行、补充一下、先不执行。</p>
+        </article>
+        <article class="node">
+          <span class="num">5</span>
+          <h3>进入模式链路</h3>
+          <p>根据用户确认进入快速问答、深度洞察或生成 BI。</p>
+        </article>
+        <article class="node">
+          <span class="num">6</span>
+          <h3>输出结果</h3>
+          <p>回答、报告、数据表、图表方案或 BI 看板写入结果。</p>
+        </article>
+        <article class="node">
+          <span class="num">7</span>
+          <h3>沉淀上下文</h3>
+          <p>保存聊天历史、业务知识、用户偏好和后续追问入口。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>三种问答链路</h2>
+      <div class="branch-grid">
+        <article class="branch quick">
+          <h3>快速问答</h3>
+          <ol>
+            <li>识别问题指向。</li>
+            <li>选择相关 Sheet 和字段。</li>
+            <li>必要时生成安全 SELECT 查询。</li>
+            <li>返回简洁结论、查询结果表和推荐追问。</li>
+          </ol>
+        </article>
+        <article class="branch deep">
+          <h3>深度洞察</h3>
+          <ol>
+            <li>关键词和筛选条件识别。</li>
+            <li>业务分析师、数据分析师、管理决策者多角色拆解。</li>
+            <li>筛选子问题并生成 SQL。</li>
+            <li>执行查询、生成图表证据。</li>
+            <li>输出结构化深度报告。</li>
+          </ol>
+        </article>
+        <article class="branch builder">
+          <h3>生成 BI</h3>
+          <ol>
+            <li>识别创建、修改、探索或非 BI 意图。</li>
+            <li>匹配已有图表，避免重复创建。</li>
+            <li>规划指标、维度、图表类型和分类。</li>
+            <li>确认业务知识、偏好和报表方案。</li>
+            <li>写入 BI 看板并返回查看入口。</li>
+          </ol>
+        </article>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>接口与前端契约</h2>
+      <div class="contract">
+        <div class="card">
+          <strong>POST /api/chat/intent</strong>
+          <span>返回 mode、intent、confidence、evidence、warnings、plan_steps 和 actions，用于前端意图确认卡。</span>
+        </div>
+        <div class="card">
+          <strong>POST /api/chat/quick-qa</strong>
+          <span>确认后执行快速问答，返回 answer、data、recommended_questions 和 agent_steps。</span>
+        </div>
+        <div class="card">
+          <strong>POST /api/chat/deep-research</strong>
+          <span>SSE 返回深度链路进度，前端实时展示智能体执行轨迹和最终报告。</span>
+        </div>
+        <div class="card">
+          <strong>POST /api/chat/bi-builder</strong>
+          <span>确认后进入生成 BI 链路，继续使用已有问卷、知识确认、方案调整和生成动作。</span>
+        </div>
+      </div>
+      <p class="note">
+        备注：用户提供的 ChatGPT 分享链接当前无法通过公开抓取读取，设计主要参考本地 ReAct HTML 架构图与现有项目代码。
+      </p>
+    </section>
+  </main>
+</body>
+</html>
